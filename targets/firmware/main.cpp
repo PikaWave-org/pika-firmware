@@ -6,7 +6,14 @@
 #include <pika/log.h>
 #include <pika/st75160.h>
 
-namespace lcd = pika::lcd;
+/* The panel, wired up as the board header describes it. */
+static const pika::lcd::Config lcd_cfg = {
+  &BOARD_LCD_I2C, BOARD_LCD_I2C_ADDR,
+  LINE_LCD_RST, LINE_LCD_BKLT,
+  LINE_LCD_SCL, LINE_LCD_SDA, BOARD_LCD_I2C_PINMODE
+};
+
+static pika::lcd::St75160 lcd{lcd_cfg};
 
 /* Last measured frame time, in milliseconds. */
 uint32_t flush_ms;
@@ -18,22 +25,22 @@ uint32_t flush_ms;
  */
 static void draw_test_image(void) {
 
-  lcd::clear();
-  lcd::frame(0, 0, lcd::width, lcd::height, true);
+  lcd.clear();
+  lcd.frame(0, 0, pika::lcd::width, pika::lcd::height, true);
 
   for (int y = 0; y < 24; y += 8) {
     for (int x = 0; x < 32; x += 8) {
       if (((x ^ y) & 8) == 0) {
-        lcd::rect(4 + x, 68 + y, 8, 8, true);
+        lcd.rect(4 + x, 68 + y, 8, 8, true);
       }
     }
   }
 
-  for (int i = 0; i < lcd::height; i++) {
-    lcd::pixel(lcd::width - lcd::height + i, i, true);
+  for (int i = 0; i < pika::lcd::height; i++) {
+    lcd.pixel(pika::lcd::width - pika::lcd::height + i, i, true);
   }
 
-  lcd::text(4, 6, BOARD_NAME);
+  lcd.text(4, 6, BOARD_NAME);
 }
 
 /*
@@ -53,16 +60,16 @@ static THD_FUNCTION(heartbeat, arg) {
 
     char line[24];
     chsnprintf(line, sizeof line, "beat %u", beat);
-    lcd::rect(4, 20, 8 * 12, 8, false);
-    lcd::text(4, 20, line);
+    lcd.rect(4, 20, 8 * 12, 8, false);
+    lcd.text(4, 20, line);
 
     systime_t start = chVTGetSystemTimeX();
-    bool ok = lcd::flush();
+    bool ok = lcd.flush();
     sysinterval_t took = chVTTimeElapsedSinceX(start);
     flush_ms = (uint32_t)TIME_I2MS(took);
 
     if (!ok) {
-      LOG("lcd: flush failed, i2c error 0x%08x", (unsigned)lcd::last_error());
+      LOG("lcd: flush failed, i2c error 0x%08x", (unsigned)lcd.last_error());
     }
     else if (beat == 0) {
       LOG("lcd: flush took %ums", (unsigned)flush_ms);
@@ -81,24 +88,25 @@ int main(void) {
   pika::log_init();
   LOG("\r\n" BOARD_NAME " starting");
 
-  lcd::backlight(true);
+  lcd.backlight(true);
 
-  bool ok = lcd::init();
+  bool ok = lcd.init();
   LOG("lcd: init %s, i2c error 0x%08x, status 0x%02x", ok ? "ok" : "failed",
-      (unsigned)lcd::last_error(), (unsigned)lcd::read_status());
+      (unsigned)lcd.last_error(), (unsigned)lcd.read_status());
 
   if (ok) {
-    bool verified = lcd::verify();
+    bool verified = lcd.verify();
+    const uint8_t *got = lcd.verify_read();
     LOG("lcd: readback %s, got %02x %02x %02x %02x %02x %02x %02x %02x",
         verified ? "ok" : "NO DATA",
-        (unsigned)lcd::verify_read[0], (unsigned)lcd::verify_read[1],
-        (unsigned)lcd::verify_read[2], (unsigned)lcd::verify_read[3],
-        (unsigned)lcd::verify_read[4], (unsigned)lcd::verify_read[5],
-        (unsigned)lcd::verify_read[6], (unsigned)lcd::verify_read[7]);
+        (unsigned)got[0], (unsigned)got[1],
+        (unsigned)got[2], (unsigned)got[3],
+        (unsigned)got[4], (unsigned)got[5],
+        (unsigned)got[6], (unsigned)got[7]);
 
     draw_test_image();
-    if (!lcd::flush()) {
-      LOG("lcd: flush failed, i2c error 0x%08x", (unsigned)lcd::last_error());
+    if (!lcd.flush()) {
+      LOG("lcd: flush failed, i2c error 0x%08x", (unsigned)lcd.last_error());
     }
   }
 

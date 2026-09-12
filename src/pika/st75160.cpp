@@ -124,48 +124,77 @@ const uint8_t frame_addr[] = {
 };
 
 /*
- * Transfer buffers, placed in D2 SRAM through the linker script's .nocache
- * section (0x30002000 on this part).
+ * Transfer buffers, placed in AHB SRAM2 through the linker script's .nocache
+ * section (0x30004000 on this part).
  *
- * Placement is not a detail: the I2C driver moves data by DMA, DMA1/DMA2
- * live in the D2 domain, and a buffer they cannot reach fails silently -
- * i2cMasterTransmitTimeout() returns MSG_OK, the slave ACKs every byte, and
- * nothing of what was meant to be sent arrives. Thread stacks are worse
- * still, being in DTCM, which no DMA controller here can touch.
+ * Placement is not a detail, and it has two halves, both of which fail
+ * silently: i2cMasterTransmitTimeout() returns MSG_OK, the slave ACKs every
+ * byte, and nothing of what was meant to be sent arrives.
+ *
+ *   - The memory has to be in the D2 domain, where DMA1/DMA2 live. Thread
+ *     stacks are worse than merely wrong, being in DTCM, which no DMA
+ *     controller here can touch.
+ *   - It also has to be outside the D-cache, which ChibiOS enables in crt1.c;
+ *     otherwise the CPU and the DMA controller look at different data. The
+ *     MPU region configured by STM32_NOCACHE_RBAR covers exactly this
+ *     section.
+ *
+ * These buffers are deliberately file-static rather than members of St75160:
+ * the placement above is the whole point of them, and making them members
+ * would hand that responsibility to whoever declares the object. The cost is
+ * that one instance is the supported case, which is what the board has.
  */
 #define DMA_BUF __attribute__((section(".nocache"), aligned(4)))
 
 DMA_BUF uint8_t frame_tx[1 + fb_size];  /* control byte + framebuffer  */
-uint8_t *const fb = &frame_tx[1];
 DMA_BUF uint8_t cmd_tx[2];              /* control byte + one byte     */
 DMA_BUF uint8_t rx_buf[8];              /* readback, dummy byte first  */
 
-uint32_t error_flags;
-bool ready;
+/*
+ * Scratch for run_co1(): a whole script emitted as one transaction with Co=1
+ * control bytes, so each command's parameters follow it without an
+ * intervening STOP. The vendor's code uses one transaction per byte instead;
+ * which of the two this controller actually honours is what the selftest is
+ * here to establish.
+ */
+DMA_BUF uint8_t seq_buf[192];
 
-void bus_recover(void);
+} /* anonymous namespace */
 
-bool xfer(const uint8_t *buf, size_t len, sysinterval_t timeout) {
+/*
+ * Deliberately does nothing but take the config and work out where the
+ * framebuffer starts, both of which are plain address arithmetic.
+ *
+ * A static instance is constructed before main(), and therefore before
+ * halInit(): at that point the MPU region that makes .nocache non-cacheable
+ * has not been programmed yet, so any write here would go through the data
+ * cache rather than to the memory DMA reads. Nothing needs writing this
+ * early - init() sets the control byte along with the rest of the frame.
+ */
+St75160::St75160(const Config &cfg) : cfg_(cfg), fb_(&frame_tx[1]) {
+}
+
+bool St75160::xfer(const uint8_t *buf, size_t len, sysinterval_t timeout) {
 
   /* A transfer that timed out leaves the driver in I2C_LOCKED, and the high
      level driver asserts on any further call in that state, so the bus is
      restarted before giving up on the transfer.*/
-  if (BOARD_LCD_I2C.state != I2C_READY) {
+  if (cfg_.i2c->state != I2C_READY) {
     bus_recover();
-    if (i2cStart(&BOARD_LCD_I2C, &i2c_cfg) != HAL_RET_SUCCESS) {
-      error_flags = err_start;
+    if (i2cStart(cfg_.i2c, &i2c_cfg) != HAL_RET_SUCCESS) {
+      error_flags_ = err_start;
       return false;
     }
   }
 
-  msg_t msg = i2cMasterTransmitTimeout(&BOARD_LCD_I2C, BOARD_LCD_I2C_ADDR,
+  msg_t msg = i2cMasterTransmitTimeout(cfg_.i2c, cfg_.addr,
                                        buf, len, nullptr, 0, timeout);
   if (msg != MSG_OK) {
-    error_flags = (uint32_t)i2cGetErrors(&BOARD_LCD_I2C);
-    if (error_flags == 0U) {
+    error_flags_ = (uint32_t)i2cGetErrors(cfg_.i2c);
+    if (error_flags_ == 0U) {
       /* MSG_TIMEOUT with no error flag: the peripheral never saw an idle
          bus, i.e. SCL or SDA is stuck low.*/
-      error_flags = err_bus_stuck;
+      error_flags_ = err_bus_stuck;
     }
     return false;
   }
@@ -182,58 +211,50 @@ bool xfer(const uint8_t *buf, size_t len, sysinterval_t timeout) {
  * Releasing the pins to GPIO, clocking out any half sent byte and issuing a
  * STOP puts the bus back into the idle state.
  */
-void bus_recover(void) {
+void St75160::bus_recover(void) {
 
-  i2cStop(&BOARD_LCD_I2C);
+  i2cStop(cfg_.i2c);
 
   /* The output latches have to be set before the pins become outputs: they
      come out of reset at zero, so switching mode first would pull both lines
      low for as long as it takes to set them, which the panel sees as a START
      and which leaves the bus busy - the very state this is here to clear.*/
-  palSetLine(LINE_LCD_SCL);
-  palSetLine(LINE_LCD_SDA);
-  palSetLineMode(LINE_LCD_SCL, PAL_MODE_OUTPUT_OPENDRAIN);
-  palSetLineMode(LINE_LCD_SDA, PAL_MODE_OUTPUT_OPENDRAIN);
+  palSetLine(cfg_.scl);
+  palSetLine(cfg_.sda);
+  palSetLineMode(cfg_.scl, PAL_MODE_OUTPUT_OPENDRAIN);
+  palSetLineMode(cfg_.sda, PAL_MODE_OUTPUT_OPENDRAIN);
   chThdSleepMilliseconds(1);
 
   /* Up to one byte plus its ACK of clocks, stopping as soon as the slave
      lets SDA go.*/
-  for (int i = 0; (i < 9) && (palReadLine(LINE_LCD_SDA) == PAL_LOW); i++) {
-    palClearLine(LINE_LCD_SCL);
+  for (int i = 0; (i < 9) && (palReadLine(cfg_.sda) == PAL_LOW); i++) {
+    palClearLine(cfg_.scl);
     chThdSleepMicroseconds(5);
-    palSetLine(LINE_LCD_SCL);
+    palSetLine(cfg_.scl);
     chThdSleepMicroseconds(5);
   }
 
   /* STOP condition: SDA rises while SCL is high.*/
-  palClearLine(LINE_LCD_SDA);
+  palClearLine(cfg_.sda);
   chThdSleepMicroseconds(5);
-  palSetLine(LINE_LCD_SCL);
+  palSetLine(cfg_.scl);
   chThdSleepMicroseconds(5);
-  palSetLine(LINE_LCD_SDA);
+  palSetLine(cfg_.sda);
   chThdSleepMicroseconds(5);
 
-  palSetLineMode(LINE_LCD_SCL, BOARD_LCD_I2C_PINMODE);
-  palSetLineMode(LINE_LCD_SDA, BOARD_LCD_I2C_PINMODE);
+  palSetLineMode(cfg_.scl, cfg_.pinmode);
+  palSetLineMode(cfg_.sda, cfg_.pinmode);
 }
 
 /** @brief  Sends one control byte plus one command or parameter byte. */
-bool put(uint8_t ctrl, uint8_t value) {
+bool St75160::put(uint8_t ctrl, uint8_t value) {
 
   cmd_tx[0] = ctrl;
   cmd_tx[1] = value;
   return xfer(cmd_tx, sizeof cmd_tx, TIME_MS2I(100));
 }
 
-/*
- * Same script, emitted as a single transaction with Co=1 control bytes, so
- * each command's parameters follow it without an intervening STOP. The
- * vendor's code uses one transaction per byte instead; which of the two this
- * controller actually honours is what the selftest is here to establish.
- */
-DMA_BUF uint8_t seq_buf[192];
-
-bool run_co1(const uint8_t *script, size_t len) {
+bool St75160::run_co1(const uint8_t *script, size_t len) {
 
   size_t i = 0U;
   size_t n = 0U;
@@ -265,28 +286,24 @@ bool run_co1(const uint8_t *script, size_t len) {
   return (n == 0U) || xfer(seq_buf, n, TIME_MS2I(100));
 }
 
-} /* anonymous namespace */
+bool St75160::init(bool skip_otp) {
 
-uint8_t verify_read[8];
-
-bool init(bool skip_otp) {
-
-  error_flags = 0U;
-  ready = false;
+  error_flags_ = 0U;
+  ready_ = false;
   frame_tx[0] = ctrl_data;
   clear();
 
   /* Reset pulse. The datasheet only asks for 1us low and 1ms of settling,
      but the vendor's reference code uses 200ms and 100ms, so use those.*/
-  palClearLine(LINE_LCD_RST);
+  palClearLine(cfg_.rst);
   chThdSleepMilliseconds(200);
-  palSetLine(LINE_LCD_RST);
+  palSetLine(cfg_.rst);
   chThdSleepMilliseconds(100);
 
   bus_recover();
 
-  if (i2cStart(&BOARD_LCD_I2C, &i2c_cfg) != HAL_RET_SUCCESS) {
-    error_flags = err_start;
+  if (i2cStart(cfg_.i2c, &i2c_cfg) != HAL_RET_SUCCESS) {
+    error_flags_ = err_start;
     return false;
   }
 
@@ -301,24 +318,24 @@ bool init(bool skip_otp) {
     return false;
   }
 
-  ready = true;
+  ready_ = true;
   if (!flush()) {
-    ready = false;
+    ready_ = false;
     return false;
   }
 
   return true;
 }
 
-void clear(bool on) {
+void St75160::clear(bool on) {
 
   uint8_t v = on ? 0xFFU : 0x00U;
   for (unsigned i = 0U; i < fb_size; i++) {
-    fb[i] = v;
+    fb_[i] = v;
   }
 }
 
-void pixel(int x, int y, bool on) {
+void St75160::pixel(int x, int y, bool on) {
 
   if ((x < 0) || (x >= width) || (y < 0) || (y >= height)) {
     return;
@@ -332,7 +349,7 @@ void pixel(int x, int y, bool on) {
 
   /* One byte covers 8 rows of one column, D7 being the topmost row.*/
   uint8_t mask = (uint8_t)(1U << (7 - (y & 7)));
-  uint8_t *p = &fb[((unsigned)y / 8U) * width + (unsigned)x];
+  uint8_t *p = &fb_[((unsigned)y / 8U) * width + (unsigned)x];
 
   if (on) {
     *p |= mask;
@@ -342,7 +359,7 @@ void pixel(int x, int y, bool on) {
   }
 }
 
-void rect(int x, int y, int w, int h, bool on) {
+void St75160::rect(int x, int y, int w, int h, bool on) {
 
   for (int j = y; j < (y + h); j++) {
     for (int i = x; i < (x + w); i++) {
@@ -351,7 +368,7 @@ void rect(int x, int y, int w, int h, bool on) {
   }
 }
 
-void frame(int x, int y, int w, int h, bool on) {
+void St75160::frame(int x, int y, int w, int h, bool on) {
 
   for (int i = x; i < (x + w); i++) {
     pixel(i, y, on);
@@ -363,7 +380,7 @@ void frame(int x, int y, int w, int h, bool on) {
   }
 }
 
-int text(int x, int y, const char *s, bool on) {
+int St75160::text(int x, int y, const char *s, bool on) {
 
   for (; *s != '\0'; s++) {
     char c = *s;
@@ -386,7 +403,7 @@ int text(int x, int y, const char *s, bool on) {
   return x;
 }
 
-bool verify(void) {
+bool St75160::verify(void) {
 
   static const uint8_t pattern[4] = { 0xA5U, 0x3CU, 0xFFU, 0x01U };
 
@@ -394,7 +411,7 @@ bool verify(void) {
      actually does rather than a special case.*/
   clear();
   for (unsigned i = 0U; i < sizeof pattern; i++) {
-    fb[i] = pattern[i];
+    fb_[i] = pattern[i];
   }
   if (!flush()) {
     return false;
@@ -416,10 +433,10 @@ bool verify(void) {
      and the control byte as its own transaction followed by a plain receive.
      They exercise different paths in the I2C driver.*/
   cmd_tx[0] = ctrl_data;
-  if (i2cMasterTransmitTimeout(&BOARD_LCD_I2C, BOARD_LCD_I2C_ADDR,
+  if (i2cMasterTransmitTimeout(cfg_.i2c, cfg_.addr,
                                cmd_tx, 1U, rx_buf, 4U,
                                TIME_MS2I(100)) != MSG_OK) {
-    error_flags = (uint32_t)i2cGetErrors(&BOARD_LCD_I2C);
+    error_flags_ = (uint32_t)i2cGetErrors(cfg_.i2c);
   }
 
   if (!run_co1(frame_addr_read, sizeof frame_addr_read)) {
@@ -427,14 +444,14 @@ bool verify(void) {
   }
   cmd_tx[0] = ctrl_data;
   (void)xfer(cmd_tx, 1U, TIME_MS2I(100));
-  if (i2cMasterReceiveTimeout(&BOARD_LCD_I2C, BOARD_LCD_I2C_ADDR,
+  if (i2cMasterReceiveTimeout(cfg_.i2c, cfg_.addr,
                               &rx_buf[4], 4U, TIME_MS2I(100)) != MSG_OK) {
-    error_flags = (uint32_t)i2cGetErrors(&BOARD_LCD_I2C);
+    error_flags_ = (uint32_t)i2cGetErrors(cfg_.i2c);
   }
 
   bool ok = false;
   for (unsigned i = 0U; i < sizeof rx_buf; i++) {
-    verify_read[i] = rx_buf[i];
+    verify_read_[i] = rx_buf[i];
     if (rx_buf[i] == pattern[0]) {
       ok = true;          /* the pattern came back: data really moved */
     }
@@ -443,22 +460,22 @@ bool verify(void) {
   return ok;
 }
 
-int read_status(void) {
+int St75160::read_status(void) {
 
   static DMA_BUF uint8_t rx[2];
 
   cmd_tx[0] = ctrl_cmd;
-  if (i2cMasterTransmitTimeout(&BOARD_LCD_I2C, BOARD_LCD_I2C_ADDR,
+  if (i2cMasterTransmitTimeout(cfg_.i2c, cfg_.addr,
                                cmd_tx, 1U, rx, sizeof rx,
                                TIME_MS2I(50)) != MSG_OK) {
-    error_flags = (uint32_t)i2cGetErrors(&BOARD_LCD_I2C);
+    error_flags_ = (uint32_t)i2cGetErrors(cfg_.i2c);
     return -1;
   }
 
   return (int)rx[1];
 }
 
-bool fill_raw(uint8_t value) {
+bool St75160::fill_raw(uint8_t value) {
 
   /* Write_enable() from the reference code: row window and write data, with
      no column command, over the 25 page window it uses.*/
@@ -478,9 +495,9 @@ bool fill_raw(uint8_t value) {
   return true;
 }
 
-bool flush(void) {
+bool St75160::flush(void) {
 
-  if (!ready) {
+  if (!ready_) {
     return false;
   }
 
@@ -491,25 +508,25 @@ bool flush(void) {
   return xfer(frame_tx, sizeof frame_tx, TIME_MS2I(500));
 }
 
-bool display(bool on) {
+bool St75160::display(bool on) {
 
   return put(ctrl_cmd, 0x30U) &&
          put(ctrl_cmd, on ? 0xAFU : 0xAEU);
 }
 
-bool all_pixels(bool on) {
+bool St75160::all_pixels(bool on) {
 
   return put(ctrl_cmd, 0x30U) &&
          put(ctrl_cmd, on ? 0xA5U : 0xA4U);
 }
 
-bool inverse(bool on) {
+bool St75160::inverse(bool on) {
 
   return put(ctrl_cmd, 0x30U) &&
          put(ctrl_cmd, on ? 0xA7U : 0xA6U);
 }
 
-bool set_vop(uint16_t vpr) {
+bool St75160::set_vop(uint16_t vpr) {
 
   return put(ctrl_cmd, 0x30U) &&
          put(ctrl_cmd, 0x81U) &&
@@ -517,19 +534,14 @@ bool set_vop(uint16_t vpr) {
          put(ctrl_data, (uint8_t)((vpr >> 6) & 0x07U));
 }
 
-void backlight(bool on) {
+void St75160::backlight(bool on) {
 
   if (on) {
-    palSetLine(LINE_LCD_BKLT);
+    palSetLine(cfg_.bklt);
   }
   else {
-    palClearLine(LINE_LCD_BKLT);
+    palClearLine(cfg_.bklt);
   }
-}
-
-uint32_t last_error(void) {
-
-  return error_flags;
 }
 
 } /* namespace pika::lcd */
