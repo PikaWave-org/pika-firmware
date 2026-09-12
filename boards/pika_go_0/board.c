@@ -51,6 +51,15 @@ static void stm32_gpio_init(void) {
   palSetLineMode(LINE_LCD_SCL,     BOARD_LCD_I2C_PINMODE);
   palSetLineMode(LINE_LCD_SDA,     BOARD_LCD_I2C_PINMODE);
 
+  /* Speaker: SPK_OUT is DAC1_OUT1 and stays analog, SPK_EN is the
+     amplifier's active low shutdown. ODR resets to 0, but clear it
+     explicitly before the pin becomes an output so the intent survives a
+     reordering of this function: a high glitch on /SD un-mutes the
+     amplifier while its input is at an undefined level.*/
+  palClearLine(LINE_SPK_EN);
+  palSetLineMode(LINE_SPK_EN,      PAL_MODE_OUTPUT_PUSHPULL);
+  palSetLineMode(LINE_SPK_OUT,     PAL_MODE_INPUT_ANALOG);
+
   /* The HSE oscillator has to be running before stm32_clock_init().*/
   palSetLine(LINE_HSE_EN);
 }
