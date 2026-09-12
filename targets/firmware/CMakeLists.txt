@@ -4,4 +4,5 @@ pika_add_firmware(firmware
                 main.cpp
                 ${SRC_ROOT}/pika/log.cpp
                 ${SRC_ROOT}/pika/speaker.cpp
-                ${SRC_ROOT}/pika/st75160.cpp)
+                ${SRC_ROOT}/pika/st75160.cpp
+                ${SRC_ROOT}/pika/ublox.cpp)

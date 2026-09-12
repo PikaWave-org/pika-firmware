@@ -428,9 +428,13 @@
  *          buffers depending on the requirements of your application.
  * @note    The default is 16 bytes for both the transmission and receive
  *          buffers.
+ * @note    Raised to 256 for the GNSS receiver: a UBX-NAV-PVT frame is 100
+ *          bytes on the wire, so a 16 byte receive queue would overflow
+ *          before the reader thread gets a chance to run. The size is global,
+ *          so the debug serial driver grows with it.
  */
 #if !defined(SERIAL_BUFFERS_SIZE) || defined(__DOXYGEN__)
-#define SERIAL_BUFFERS_SIZE                 16
+#define SERIAL_BUFFERS_SIZE                 256
 #endif
 
 /*===========================================================================*/

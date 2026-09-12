@@ -75,6 +75,8 @@
 #define LINE_LCD_SDA                PAL_LINE(GPIOB, 7U)
 #define LINE_SPK_OUT                PAL_LINE(GPIOA, 4U)
 #define LINE_SPK_EN                 PAL_LINE(GPIOE, 15U)
+#define LINE_GNSS_TX                PAL_LINE(GPIOD, 5U)
+#define LINE_GNSS_RX                PAL_LINE(GPIOD, 6U)
 
 /* Serial driver behind the debug UART pins above. */
 #define BOARD_DBG_SERIAL            SD3
@@ -127,6 +129,23 @@
  * charging ramp into the amplifier, which is an audible pop.
  */
 #define BOARD_SPK_SETTLE_MS         50U
+
+/*
+ * u-blox CAM-M8Q-0 GNSS receiver on USART2.
+ *
+ * The line names are from the MCU's point of view, like the debug UART ones:
+ * LINE_GNSS_TX is what the MCU drives, so it goes to the receiver's RX pad,
+ * and LINE_GNSS_RX carries the receiver's output.
+ *
+ * The module powers up at 9600 8N1 with both NMEA and UBX enabled on its
+ * UART1. The driver talks UBX only and switches the link to 115200; see
+ * pika/ublox.h for why it probes the fast rate first.
+ *
+ * TIMEPULSE, EXTINT, SAFEBOOT and RESET_N are not wired on this generation.
+ */
+#define BOARD_GNSS_SERIAL           SD2
+#define BOARD_GNSS_BAUD_BOOT        9600U
+#define BOARD_GNSS_BAUD_RUN         115200U
 
 /*===========================================================================*/
 /* External declarations.                                                    */

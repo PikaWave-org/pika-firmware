@@ -6,6 +6,7 @@
 #include <pika/log.h>
 #include <pika/speaker.h>
 #include <pika/st75160.h>
+#include <pika/ublox.h>
 
 /* The panel, wired up as the board header describes it. */
 static const pika::lcd::St75160::Config lcd_cfg = {
@@ -23,6 +24,13 @@ static const pika::spk::Config spk_cfg = {
 };
 
 static pika::spk::Speaker spk{spk_cfg};
+
+/* The GNSS receiver, at one navigation solution per second. */
+static const pika::gnss::Ublox::Config gnss_cfg = {
+  &BOARD_GNSS_SERIAL, BOARD_GNSS_BAUD_BOOT, BOARD_GNSS_BAUD_RUN, 1000U
+};
+
+static pika::gnss::Ublox gnss{gnss_cfg};
 
 /* Last measured frame time, in milliseconds. */
 uint32_t flush_ms;
@@ -89,6 +97,81 @@ static THD_FUNCTION(heartbeat, arg) {
   }
 }
 
+/*
+ * Formats a 1e-7 degree coordinate as plain decimal degrees. chprintf() has
+ * no floating point support in this build, and the sign has to be taken off
+ * before the split so that -0.5 degrees does not come out as "-0.-5000000".
+ */
+static void format_deg(char *out, size_t len, int32_t deg_1e7) {
+
+  bool neg = deg_1e7 < 0;
+  uint32_t mag = (uint32_t)(neg ? -(int64_t)deg_1e7 : (int64_t)deg_1e7);
+
+  chsnprintf(out, len, "%s%u.%07u", neg ? "-" : "",
+             (unsigned)(mag / 10000000U), (unsigned)(mag % 10000000U));
+}
+
+/*
+ * GNSS reader. poll() blocks on the serial driver, so this thread spends
+ * almost all its time asleep and wakes once per navigation solution.
+ *
+ * The log line carries the link counters alongside the fix because the two
+ * failure modes look identical otherwise: a receiver with no sky view and a
+ * receiver that is not talking at all both report fix=0 sv=0. Bytes and
+ * frames climbing tells them apart.
+ */
+static THD_WORKING_AREA(waGnss, 2048);
+static THD_FUNCTION(gnss_reader, arg) {
+
+  (void)arg;
+  chRegSetThreadName("gnss");
+
+  uint32_t silent = 0;
+
+  while (true) {
+    if (!gnss.poll(TIME_MS2I(1500))) {
+      pika::gnss::Ublox::Stats s = gnss.stats();
+      silent++;
+      LOG("gnss: silent for %us, bytes %u frames %u csum %u resync %u",
+          (unsigned)(silent * 3U / 2U), (unsigned)s.bytes_rx,
+          (unsigned)s.frames_ok, (unsigned)s.checksum_errors,
+          (unsigned)s.resyncs);
+      continue;
+    }
+
+    silent = 0;
+
+    pika::gnss::ubx_nav_pvt pvt = gnss.nav_pvt();
+    pika::gnss::Ublox::Stats s = gnss.stats();
+
+    /* A "!" marks a solution the receiver itself does not trust. */
+    bool fix_ok = (pvt.flags & pika::gnss::flags_gnss_fix_ok) != 0U;
+
+    char lat[16], lon[16];
+    format_deg(lat, sizeof lat, pvt.lat);
+    format_deg(lon, sizeof lon, pvt.lon);
+
+    LOG("gnss: fix=%u%s sv=%u lat=%s lon=%s alt=%dm hacc=%um pdop=%u.%02u "
+        "frames=%u csum=%u",
+        (unsigned)pvt.fixType, fix_ok ? "" : "!", (unsigned)pvt.numSV,
+        lat, lon, (int)(pvt.hMSL / 1000), (unsigned)(pvt.hAcc / 1000U),
+        (unsigned)(pvt.pDOP / 100U), (unsigned)(pvt.pDOP % 100U),
+        (unsigned)s.frames_ok, (unsigned)s.checksum_errors);
+
+    /* Date, time and the UTC offset all have to be resolved before the
+       timestamp is worth printing.*/
+    constexpr uint8_t time_ready = pika::gnss::valid_date |
+                                   pika::gnss::valid_time |
+                                   pika::gnss::valid_fully_resolved;
+
+    if ((pvt.valid & time_ready) == time_ready) {
+      LOG("gnss: utc %04u-%02u-%02u %02u:%02u:%02u", (unsigned)pvt.year,
+          (unsigned)pvt.month, (unsigned)pvt.day, (unsigned)pvt.hour,
+          (unsigned)pvt.min, (unsigned)pvt.sec);
+    }
+  }
+}
+
 int main(void) {
 
   halInit();
@@ -132,6 +215,15 @@ int main(void) {
     spk.tone(1000, 1000, 26);
     chThdSleepMilliseconds(1000);
     spk.stop();
+  }
+
+  bool gnss_ok = gnss.init();
+  LOG("gnss: init %s, error %u", gnss_ok ? "ok" : "failed",
+      (unsigned)gnss.last_error());
+
+  if (gnss_ok) {
+    chThdCreateStatic(waGnss, sizeof(waGnss), NORMALPRIO, gnss_reader,
+                      nullptr);
   }
 
   chThdCreateStatic(waHeartbeat, sizeof(waHeartbeat), NORMALPRIO, heartbeat,

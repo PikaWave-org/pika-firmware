@@ -60,6 +60,13 @@ static void stm32_gpio_init(void) {
   palSetLineMode(LINE_SPK_EN,      PAL_MODE_OUTPUT_PUSHPULL);
   palSetLineMode(LINE_SPK_OUT,     PAL_MODE_INPUT_ANALOG);
 
+  /* GNSS receiver on USART2, AF7. The pull-up on RX keeps the line idle high
+     while the module is still booting, so the USART sees no framing errors.*/
+  palSetLineMode(LINE_GNSS_TX,     PAL_MODE_ALTERNATE(7U) |
+                                   PAL_STM32_OSPEED_MID2);
+  palSetLineMode(LINE_GNSS_RX,     PAL_MODE_ALTERNATE(7U) |
+                                   PAL_STM32_PUPDR_PULLUP);
+
   /* The HSE oscillator has to be running before stm32_clock_init().*/
   palSetLine(LINE_HSE_EN);
 }
