@@ -131,10 +131,15 @@ int main(void) {
     LOG("spk: dc %s, verify %s, err 0x%08x", dc ? "ok" : "FAILED",
         moved ? "ok" : "FAILED", (unsigned)spk.last_error());
 
-    /* stop() rides out the release ramp before muting, so the sleep only has
+    /* 1kHz for a second, 20dB below full scale. The volume byte is linear in
+       amplitude, so 255 * 10^(-20/20) rounds to 26, which lands on -19.9dB -
+       the byte is about a third of a dB per step down here, so 20.0 exactly
+       is not on the grid.
+
+       stop() rides out the release ramp before muting, so the sleep only has
        to cover the tone itself.*/
-    spk.tone(1000, 150);
-    chThdSleepMilliseconds(150);
+    spk.tone(1000, 1000, 26);
+    chThdSleepMilliseconds(1000);
     spk.stop();
   }
 
