@@ -78,8 +78,10 @@
  * PLLs static settings.
  * Reading STM32 Reference Manual is required.
  *
- * All three PLLs are fed by the 25MHz HSE (see STM32_HSECLK in board.h)
- * divided by 5, so PLLxIN = 5MHz (wide VCO range).
+ * All three PLLs are fed by the 24MHz HSE (see STM32_HSECLK in board.h,
+ * and note that the oscillator is switched on from board.c before the
+ * clock tree is initialized) divided by 6, so PLLxIN = 4MHz (wide VCO
+ * range).
  *   PLL1: VCO 520MHz, P = 520MHz (SYSCLK), Q = 52MHz, R = 130MHz
  *   PLL2: VCO 800MHz, P = 20MHz,  Q = 100MHz, R = 100MHz
  *   PLL3: VCO 480MHz, P = 48MHz,  Q = 48MHz,  R = 48MHz
@@ -90,8 +92,8 @@
 #define STM32_PLL1_P_ENABLED                TRUE
 #define STM32_PLL1_Q_ENABLED                TRUE
 #define STM32_PLL1_R_ENABLED                TRUE
-#define STM32_PLL1_DIVM_VALUE               5
-#define STM32_PLL1_DIVN_VALUE               104
+#define STM32_PLL1_DIVM_VALUE               6
+#define STM32_PLL1_DIVN_VALUE               130
 #define STM32_PLL1_FRACN_VALUE              0
 #define STM32_PLL1_DIVP_VALUE               1
 #define STM32_PLL1_DIVQ_VALUE               10
@@ -100,8 +102,8 @@
 #define STM32_PLL2_P_ENABLED                TRUE
 #define STM32_PLL2_Q_ENABLED                TRUE
 #define STM32_PLL2_R_ENABLED                TRUE
-#define STM32_PLL2_DIVM_VALUE               5
-#define STM32_PLL2_DIVN_VALUE               160
+#define STM32_PLL2_DIVM_VALUE               6
+#define STM32_PLL2_DIVN_VALUE               200
 #define STM32_PLL2_FRACN_VALUE              0
 #define STM32_PLL2_DIVP_VALUE               40
 #define STM32_PLL2_DIVQ_VALUE               8
@@ -110,8 +112,8 @@
 #define STM32_PLL3_P_ENABLED                TRUE
 #define STM32_PLL3_Q_ENABLED                TRUE
 #define STM32_PLL3_R_ENABLED                TRUE
-#define STM32_PLL3_DIVM_VALUE               5
-#define STM32_PLL3_DIVN_VALUE               96
+#define STM32_PLL3_DIVM_VALUE               6
+#define STM32_PLL3_DIVN_VALUE               120
 #define STM32_PLL3_FRACN_VALUE              0
 #define STM32_PLL3_DIVP_VALUE               10
 #define STM32_PLL3_DIVQ_VALUE               10
@@ -142,8 +144,8 @@
 #define STM32_HRTIMSEL                      0
 #define STM32_STOPKERWUCK                   0
 #define STM32_STOPWUCK                      0
-#define STM32_RTCPRE_VALUE                  25
-#define STM32_CKPERSEL                      STM32_CKPERSEL_HSE_CK
+#define STM32_RTCPRE_VALUE                  24
+#define STM32_CKPERSEL                      STM32_CKPERSEL_HSI_CK
 #define STM32_SDMMCSEL                      STM32_SDMMCSEL_PLL1_Q_CK
 #define STM32_OCTOSPISEL                    STM32_OCTOSPISEL_HCLK
 #define STM32_FMCSEL                        STM32_FMCSEL_HCLK
@@ -278,7 +280,16 @@
 /*
  * I2C driver system settings.
  */
-#define STM32_I2C_USE_I2C1                  FALSE
+/*
+ * DMA is off for I2C on purpose. With it enabled the transfers reported
+ * success while the data never made it: reads never wrote the receive
+ * buffer, and writes put something other than the intended bytes on the
+ * wire, so the display ACKed everything and showed garbage or nothing.
+ * Interrupt mode works. Root cause not established; re-enable only with a
+ * readback test to prove the bytes arrive.
+ */
+#define STM32_I2C_USE_DMA                   FALSE
+#define STM32_I2C_USE_I2C1                  TRUE
 #define STM32_I2C_USE_I2C2                  FALSE
 #define STM32_I2C_USE_I2C3                  FALSE
 #define STM32_I2C_USE_I2C4                  FALSE
@@ -304,7 +315,7 @@
 #define STM32_I2C_I2C3_DMA_PRIORITY         3
 #define STM32_I2C_I2C4_DMA_PRIORITY         3
 #define STM32_I2C_I2C5_DMA_PRIORITY         3
-#define STM32_I2C_DMA_ERROR_HOOK(i2cp)      "osalSysHalt(\"DMA failure\")"
+#define STM32_I2C_DMA_ERROR_HOOK(i2cp)      osalSysHalt("DMA failure")
 
 /*
  * ICU driver system settings.
@@ -371,9 +382,9 @@
 /*
  * SERIAL driver system settings.
  */
-#define STM32_SERIAL_USE_USART1             TRUE
+#define STM32_SERIAL_USE_USART1             FALSE
 #define STM32_SERIAL_USE_USART2             FALSE
-#define STM32_SERIAL_USE_USART3             FALSE
+#define STM32_SERIAL_USE_USART3             TRUE
 #define STM32_SERIAL_USE_UART4              FALSE
 #define STM32_SERIAL_USE_UART5              FALSE
 #define STM32_SERIAL_USE_USART6             FALSE
@@ -431,7 +442,7 @@
 #define STM32_SPI_SPI4_IRQ_PRIORITY         10
 #define STM32_SPI_SPI5_IRQ_PRIORITY         10
 #define STM32_SPI_SPI6_IRQ_PRIORITY         10
-#define STM32_SPI_DMA_ERROR_HOOK(spip)      "osalSysHalt(\"DMA failure\")"
+#define STM32_SPI_DMA_ERROR_HOOK(spip)      osalSysHalt("DMA failure")
 
 /*
  * ST driver system settings.
@@ -487,7 +498,7 @@
 #define STM32_UART_UART8_DMA_PRIORITY       0
 #define STM32_UART_UART9_DMA_PRIORITY       0
 #define STM32_UART_USART10_DMA_PRIORITY     0
-#define STM32_UART_DMA_ERROR_HOOK(uartp)    "osalSysHalt(\"DMA failure\")"
+#define STM32_UART_DMA_ERROR_HOOK(uartp)    osalSysHalt("DMA failure")
 
 /*
  * USB driver system settings.
@@ -519,6 +530,6 @@
 #define STM32_WSPI_OCTOSPI2_MDMA_PRIORITY   1
 #define STM32_WSPI_OCTOSPI1_MDMA_IRQ_PRIORITY 10
 #define STM32_WSPI_OCTOSPI2_MDMA_IRQ_PRIORITY 10
-#define STM32_WSPI_DMA_ERROR_HOOK(wspip)    "osalSysHalt(\"MDMA failure\")"
+#define STM32_WSPI_DMA_ERROR_HOOK(wspip)    osalSysHalt("MDMA failure")
 
 #endif /* MCUCONF_H */

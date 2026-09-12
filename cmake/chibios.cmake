@@ -31,6 +31,9 @@ set(CHIBIOS_SOURCES
         # Kernel, oslib, HAL and OSAL.
         ${CHIBIOS_KERNEL_SOURCES}
         "${CHIBIOS}/os/hal/osal/rt-nil/osal.c"
+        # chprintf() and friends (os/hal/lib/streams/streams.mk).
+        "${CHIBIOS}/os/hal/lib/streams/chprintf.c"
+        "${CHIBIOS}/os/hal/lib/streams/memstreams.c"
         # STM32H7xx platform and the low level drivers we enable.
         "${CHIBIOS}/os/hal/ports/common/ARMCMx/nvic.c"
         "${CHIBIOS}/os/hal/ports/STM32/STM32H7xx/hal_lld.c"
@@ -39,6 +42,7 @@ set(CHIBIOS_SOURCES
         "${CHIBIOS_LLD}/BDMAv1/stm32_bdma.c"
         "${CHIBIOS_LLD}/MDMAv1/stm32_mdma.c"
         "${CHIBIOS_LLD}/GPIOv2/hal_pal_lld.c"
+        "${CHIBIOS_LLD}/I2Cv3/hal_i2c_lld.c"
         "${CHIBIOS_LLD}/SYSTICKv1/hal_st_lld.c"
         "${CHIBIOS_LLD}/USARTv3/hal_serial_lld.c")
 
@@ -65,9 +69,13 @@ set(CHIBIOS_INCLUDE_DIRS
         "${CHIBIOS}/os/oslib/include"
         "${CHIBIOS}/os/hal/include"
         "${CHIBIOS}/os/hal/osal/rt-nil"
+        "${CHIBIOS}/os/hal/lib/streams"
         "${CHIBIOS}/os/hal/ports/common/ARMCMx"
         "${CHIBIOS}/os/hal/ports/STM32/STM32H7xx"
         ${CHIBIOS_LLD_INCLUDE_DIRS})
+
+# Port the J-Link GDB server listens on.
+set(GDB_PORT 2331)
 
 # Cortex-M7 with double precision FPU, as in ChibiOS rules.mk.
 set(MCU_FLAGS -mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16)
@@ -96,6 +104,11 @@ function(pika_add_firmware name)
             "${SRC_ROOT}"
             ${CHIBIOS_INCLUDE_DIRS})
 
+    # The startup code only enables the FPU when this is set (DDEFS/DADEFS in
+    # ChibiOS rules.mk); without it -mfloat-abi=hard faults with UFSR.NOCP on
+    # the first FP instruction.
+    target_compile_definitions(${name}.elf PRIVATE CORTEX_USE_FPU=TRUE)
+
     target_compile_options(${name}.elf PRIVATE
             ${MCU_COMPILE_FLAGS}
             $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti -fno-exceptions -fno-threadsafe-statics>)
@@ -115,4 +128,43 @@ function(pika_add_firmware name)
             -Wl,-Map=${name}.map)
 
     set_target_properties(${name}.elf PROPERTIES LINK_DEPENDS "${BOARD_LDSCRIPT}")
+
+    # Intel HEX image for the flashing tool.
+    set(FLASH_HEX "${CMAKE_CURRENT_BINARY_DIR}/${name}.hex")
+    add_custom_command(TARGET ${name}.elf POST_BUILD
+            COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:${name}.elf> "${FLASH_HEX}"
+            BYPRODUCTS "${FLASH_HEX}"
+            COMMENT "Generating ${name}.hex")
+
+    # "make flash-<name>": program over SWD with a SEGGER J-Link.
+    #
+    # stdin is closed and the exit status ignored on purpose: J-Link Commander
+    # keeps reading commands after the script file ends and returns 1 when it
+    # is stopped that way, even after a successful download. Check its output
+    # ("Flash download" / "O.K.") to confirm the programming worked.
+    configure_file("${PROJECT_ROOT}/cmake/flash.jlink.in"
+            "${CMAKE_CURRENT_BINARY_DIR}/${name}.jlink" @ONLY)
+    set(jlink_cmd "JLinkExe -nogui 1 -device ${BOARD_JLINK_DEVICE} -if SWD -speed 4000")
+    string(APPEND jlink_cmd " -autoconnect 1 -CommandFile ${CMAKE_CURRENT_BINARY_DIR}/${name}.jlink")
+    string(APPEND jlink_cmd " < /dev/null; exit 0")
+    add_custom_target(flash-${name}
+            COMMAND sh -c "${jlink_cmd}"
+            DEPENDS ${name}.elf
+            USES_TERMINAL VERBATIM
+            COMMENT "Flashing ${name}.hex via J-Link")
+
+    # "make debug-<name>": run a J-Link GDB server for this image. Connect
+    # from another terminal with
+    #   gdb-multiarch -x <name>.gdbinit <name>.elf
+    # The ChibiOS RTOS plugin makes GDB's "info threads" show ChibiOS threads.
+    set(FW_NAME ${name})
+    configure_file("${PROJECT_ROOT}/cmake/gdbinit.in"
+            "${CMAKE_CURRENT_BINARY_DIR}/${name}.gdbinit" @ONLY)
+    add_custom_target(debug-${name}
+            COMMAND JLinkGDBServerCLExe -device ${BOARD_JLINK_DEVICE} -if SWD
+                    -speed 4000 -port ${GDB_PORT} -nogui -singlerun
+                    -rtos GDBServer/RTOSPlugin_ChibiOS
+            DEPENDS ${name}.elf
+            USES_TERMINAL
+            COMMENT "J-Link GDB server on port ${GDB_PORT} for ${name}.elf")
 endfunction()
