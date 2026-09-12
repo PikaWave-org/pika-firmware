@@ -73,6 +73,8 @@
 #define LINE_LCD_RST                PAL_LINE(GPIOC, 7U)
 #define LINE_LCD_SCL                PAL_LINE(GPIOB, 6U)
 #define LINE_LCD_SDA                PAL_LINE(GPIOB, 7U)
+#define LINE_SPK_OUT                PAL_LINE(GPIOA, 4U)
+#define LINE_SPK_EN                 PAL_LINE(GPIOE, 15U)
 
 /* Serial driver behind the debug UART pins above. */
 #define BOARD_DBG_SERIAL            SD3
@@ -92,6 +94,28 @@
 #define BOARD_LCD_I2C_PINMODE       (PAL_MODE_ALTERNATE(4U) |               \
                                      PAL_STM32_OTYPE_OPENDRAIN |            \
                                      PAL_STM32_OSPEED_MID2)
+
+/*
+ * Speaker, driven through an SSM2305 class D amplifier.
+ *
+ * LINE_SPK_OUT is DAC1_OUT1, so the DAC drives the pin directly and it stays
+ * analog. LINE_SPK_EN is the amplifier's /SD shutdown input, which is active
+ * low: the pin comes up low and the amplifier stays muted until the driver
+ * asks for sound.
+ */
+#define BOARD_SPK_DAC               DACD1
+#define BOARD_SPK_TIMER             GPTD6
+
+/* Level on LINE_SPK_EN that un-mutes the amplifier. */
+#define BOARD_SPK_EN_ON             false
+
+/*
+ * How long the output has to sit at its idle level before /SD may go high.
+ * The amplifier input is a 100nF series capacitor against 100k, so tau is
+ * 10ms and five of those gets within 1%. Un-muting before then couples the
+ * charging ramp into the amplifier, which is an audible pop.
+ */
+#define BOARD_SPK_SETTLE_MS         50U
 
 /*===========================================================================*/
 /* External declarations.                                                    */

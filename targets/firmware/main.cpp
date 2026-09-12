@@ -4,6 +4,7 @@
 #include "chprintf.h"
 
 #include <pika/log.h>
+#include <pika/speaker.h>
 #include <pika/st75160.h>
 
 /* The panel, wired up as the board header describes it. */
@@ -14,6 +15,14 @@ static const pika::lcd::Config lcd_cfg = {
 };
 
 static pika::lcd::St75160 lcd{lcd_cfg};
+
+/* The speaker, likewise. */
+static const pika::spk::Config spk_cfg = {
+  &BOARD_SPK_DAC, &BOARD_SPK_TIMER,
+  LINE_SPK_EN, BOARD_SPK_EN_ON, BOARD_SPK_SETTLE_MS
+};
+
+static pika::spk::Speaker spk{spk_cfg};
 
 /* Last measured frame time, in milliseconds. */
 uint32_t flush_ms;
@@ -108,6 +117,25 @@ int main(void) {
     if (!lcd.flush()) {
       LOG("lcd: flush failed, i2c error 0x%08x", (unsigned)lcd.last_error());
     }
+  }
+
+  /* Speaker. verify() runs with the amplifier muted, so it makes no sound:
+     it is there to catch a DMA path that moves nothing, which otherwise
+     looks exactly like a working one until you put an ear to the speaker.*/
+  bool spk_ok = spk.init();
+  LOG("spk: init %s", spk_ok ? "ok" : "failed");
+
+  if (spk_ok) {
+    bool dc = spk.verify_dc();
+    bool moved = spk.verify();
+    LOG("spk: dc %s, verify %s, err 0x%08x", dc ? "ok" : "FAILED",
+        moved ? "ok" : "FAILED", (unsigned)spk.last_error());
+
+    /* stop() rides out the release ramp before muting, so the sleep only has
+       to cover the tone itself.*/
+    spk.tone(1000, 150);
+    chThdSleepMilliseconds(150);
+    spk.stop();
   }
 
   chThdCreateStatic(waHeartbeat, sizeof(waHeartbeat), NORMALPRIO, heartbeat,
