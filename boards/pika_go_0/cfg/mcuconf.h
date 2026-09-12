@@ -289,20 +289,24 @@
  * I2C driver system settings.
  */
 /*
- * I2C runs interrupt driven: DMA does not work on this part, in either
- * direction, and it fails silently.
+ * I2C runs its transfers by DMA, which works only because two separate
+ * conditions are met, and fails silently if either is not: every transfer
+ * reports MSG_OK and the slave ACKs every byte while no data moves at all.
  *
- * Tried and rejected 2026-09-12: with the buffers in AXI SRAM the transmit
- * stream sent bytes other than the buffer contents (the display ACKed
- * everything and showed garbage); moving them to D2 SRAM at 0x30002000, the
- * domain DMA1/DMA2 live in, gave a correctly configured stream - right
- * memory address, right DMAMUX request, right direction - and the panel
- * still went blank, while receives never wrote their destination at all.
- * Every transfer reported MSG_OK throughout.
+ *   - The buffers live in D2 SRAM (the .nocache section at 0x30004000), the
+ *     domain DMA1/DMA2 sit in. In AXI SRAM the transmit stream sent bytes
+ *     other than the buffer contents; on a thread stack, which is DTCM, no
+ *     DMA controller here can reach them at all.
+ *   - That memory is excluded from the data cache by the MPU region below.
+ *     Without it the CPU and the DMA controller look at different data: the
+ *     stream is configured correctly - right address, right DMAMUX request,
+ *     right direction - and the panel still goes blank.
  *
- * Re-enabling this needs more than a buffer move. Prove it with
- * lcd::verify(), which writes a pattern and reads it back, before trusting
- * any of it.
+ * Both halves were established on hardware 2026-09-12. Changing either one,
+ * or the buffer placement in src/pika/st75160.cpp, needs a check on the real
+ * panel afterwards: the bring-up image that main() draws is the test, since
+ * a transport that moves nothing leaves the display blank while every return
+ * code stays clean.
  */
 #define STM32_I2C_USE_DMA                   TRUE
 #define STM32_I2C_USE_I2C1                  TRUE

@@ -12,7 +12,7 @@
  *
  * Usage:
  *
- *   static const pika::lcd::Config lcd_cfg = {
+ *   static const pika::lcd::St75160::Config lcd_cfg = {
  *     &BOARD_LCD_I2C, BOARD_LCD_I2C_ADDR,
  *     LINE_LCD_RST, LINE_LCD_BKLT,
  *     LINE_LCD_SCL, LINE_LCD_SDA, BOARD_LCD_I2C_PINMODE
@@ -35,31 +35,28 @@
 
 namespace pika::lcd {
 
-constexpr int width = 160;
-constexpr int height = 100;
-
-/* 8 display rows per DDRAM page, 13 pages to cover 100 rows. */
-constexpr int pages = 13;
-constexpr unsigned fb_size = pages * width;
-
-/** @brief  Vop register value corresponding to the datasheet's 11.6V. */
-constexpr uint16_t vop_default = 200U;
-
-/**
- * @brief   How the panel is wired up, taken from the board header.
- */
-struct Config {
-  I2CDriver *i2c;       /**< Bus the panel is on.                           */
-  i2caddr_t  addr;      /**< 7 bit slave address.                           */
-  ioline_t   rst;       /**< Panel reset, active low.                       */
-  ioline_t   bklt;      /**< Backlight enable, active high.                 */
-  ioline_t   scl;       /**< Bus clock, driven directly during recovery.    */
-  ioline_t   sda;       /**< Bus data, driven directly during recovery.     */
-  iomode_t   pinmode;   /**< Mode to restore on scl/sda after recovery.     */
-};
-
 class St75160 {
 public:
+
+  static constexpr int width = 160;
+  static constexpr int height = 100;
+
+  /* 8 display rows per DDRAM page, 13 pages to cover 100 rows. */
+  static constexpr int pages = 13;
+  static constexpr unsigned fb_size = pages * width;
+
+  /**
+   * @brief   How the panel is wired up, taken from the board header.
+   */
+  struct Config {
+    I2CDriver *i2c;       /**< Bus the panel is on.                           */
+    i2caddr_t  addr;      /**< 7 bit slave address.                           */
+    ioline_t   rst;       /**< Panel reset, active low.                       */
+    ioline_t   bklt;      /**< Backlight enable, active high.                 */
+    ioline_t   scl;       /**< Bus clock, driven directly during recovery.    */
+    ioline_t   sda;       /**< Bus data, driven directly during recovery.     */
+    iomode_t   pinmode;   /**< Mode to restore on scl/sda after recovery.     */
+  };
 
   explicit St75160(const Config &cfg);
 
@@ -94,70 +91,6 @@ public:
   /** @brief  Switches the backlight. */
   void backlight(bool on);
 
-  /*
-   * Bring-up helpers. These talk to the controller directly and ignore the
-   * framebuffer, which is what makes them useful when the panel shows
-   * nothing: all_pixels(true) lights every segment from inside the
-   * controller, so it separates "panel/contrast/init is wrong" from "the
-   * image data is wrong".
-   */
-
-  /** @brief  Display on or off (0xAF / 0xAE). */
-  bool display(bool on);
-
-  /** @brief  Forces every pixel on, regardless of RAM (0xA5 / 0xA4). */
-  bool all_pixels(bool on);
-
-  /** @brief  Inverts the panel (0xA7 / 0xA6). */
-  bool inverse(bool on);
-
-  /**
-   * @brief   Sets the LCD drive voltage Vop (0x81).
-   * @param   vpr   9 bit register value, 200 is the datasheet's 11.6V. The
-   *                panel is specified for 11.3..11.9V, i.e. vpr 195..205, so
-   *                stay near that unless sweeping deliberately.
-   */
-  bool set_vop(uint16_t vpr);
-
-  /**
-   * @brief   Fills the panel with one byte value, bypassing the framebuffer.
-   * @details Writes the display RAM exactly the way the vendor's reference
-   *          code does: one I2C transaction per data byte, over the same 25
-   *          page window it uses. Slow (about a second), but it is the known
-   *          good sequence, so it separates "the panel does not take our data
-   *          stream" from "the panel does not take our data at all".
-   */
-  bool fill_raw(uint8_t value);
-
-  /**
-   * @brief   Reads the controller status byte.
-   * @details D3 is display on/off, D4 scan direction, D1 inverse, D5 RMW,
-   *          D7/D6 scroll mode. The first byte read back is the dummy byte
-   *          the datasheet's bus holder requires, so the status is the
-   *          second.
-   * @return  the status byte, or negative if the read failed.
-   */
-  int read_status(void);
-
-  /**
-   * @brief   Writes a known pattern to the panel and reads it back.
-   * @details The point of this is to tell a transport that moves data from
-   *          one that silently moves none: return codes and error flags look
-   *          identical either way, which is how a broken I2C DMA path went
-   *          unnoticed through a whole bring-up. Run it after any change to
-   *          the transport.
-   * @note    It checks that the written pattern comes back, not where in the
-   *          stream it lands: the controller prefixes a dummy and a status
-   *          byte, and the read auto-increment does not follow the datasheet
-   *          well enough to pin an exact offset on. verify_read() holds the
-   *          raw bytes for inspection.
-   * @return  true if the pattern was found in what the controller returned.
-   */
-  bool verify(void);
-
-  /** @brief  Raw bytes returned by the last verify(), 8 of them. */
-  const uint8_t *verify_read(void) const { return verify_read_; }
-
   /** @brief  I2C error flags from the last failed transaction, 0 if none. */
   uint32_t last_error(void) const { return error_flags_; }
 
@@ -165,14 +98,12 @@ private:
 
   bool xfer(const uint8_t *buf, size_t len, sysinterval_t timeout);
   void bus_recover(void);
-  bool put(uint8_t ctrl, uint8_t value);
   bool run_co1(const uint8_t *script, size_t len);
 
   Config cfg_;
   uint8_t *fb_;                 /**< Framebuffer, inside the TX buffer.     */
   uint32_t error_flags_ = 0U;
   bool ready_ = false;
-  uint8_t verify_read_[8] = {}; /**< CPU side copy, never a DMA target.     */
 };
 
 } /* namespace pika::lcd */

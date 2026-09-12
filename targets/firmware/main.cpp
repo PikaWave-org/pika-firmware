@@ -7,7 +7,7 @@
 #include <pika/st75160.h>
 
 /* The panel, wired up as the board header describes it. */
-static const pika::lcd::Config lcd_cfg = {
+static const pika::lcd::St75160::Config lcd_cfg = {
   &BOARD_LCD_I2C, BOARD_LCD_I2C_ADDR,
   LINE_LCD_RST, LINE_LCD_BKLT,
   LINE_LCD_SCL, LINE_LCD_SDA, BOARD_LCD_I2C_PINMODE
@@ -26,7 +26,7 @@ uint32_t flush_ms;
 static void draw_test_image(void) {
 
   lcd.clear();
-  lcd.frame(0, 0, pika::lcd::width, pika::lcd::height, true);
+  lcd.frame(0, 0, lcd.width, lcd.height, true);
 
   for (int y = 0; y < 24; y += 8) {
     for (int x = 0; x < 32; x += 8) {
@@ -36,8 +36,8 @@ static void draw_test_image(void) {
     }
   }
 
-  for (int i = 0; i < pika::lcd::height; i++) {
-    lcd.pixel(pika::lcd::width - pika::lcd::height + i, i, true);
+  for (int i = 0; i < lcd.height; i++) {
+    lcd.pixel(lcd.width - lcd.height + i, i, true);
   }
 
   lcd.text(4, 6, BOARD_NAME);
@@ -91,19 +91,10 @@ int main(void) {
   lcd.backlight(true);
 
   bool ok = lcd.init();
-  LOG("lcd: init %s, i2c error 0x%08x, status 0x%02x", ok ? "ok" : "failed",
-      (unsigned)lcd.last_error(), (unsigned)lcd.read_status());
+  LOG("lcd: init %s, i2c error 0x%08x", ok ? "ok" : "failed",
+      (unsigned)lcd.last_error());
 
   if (ok) {
-    bool verified = lcd.verify();
-    const uint8_t *got = lcd.verify_read();
-    LOG("lcd: readback %s, got %02x %02x %02x %02x %02x %02x %02x %02x",
-        verified ? "ok" : "NO DATA",
-        (unsigned)got[0], (unsigned)got[1],
-        (unsigned)got[2], (unsigned)got[3],
-        (unsigned)got[4], (unsigned)got[5],
-        (unsigned)got[6], (unsigned)got[7]);
-
     draw_test_image();
     if (!lcd.flush()) {
       LOG("lcd: flush failed, i2c error 0x%08x", (unsigned)lcd.last_error());

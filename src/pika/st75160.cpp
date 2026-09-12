@@ -20,7 +20,6 @@ namespace {
  * init through Co=1 pairs left the panel showing noise, i.e. the command
  * bytes were being taken as display data.
  */
-constexpr uint8_t ctrl_cmd = 0x00U;   /* Co=0, A0=0: command byte      */
 constexpr uint8_t ctrl_data = 0x40U;  /* Co=0, A0=1: parameter or pixels */
 
 /* Synthetic last_error() values, outside the i2cflags_t range. */
@@ -109,17 +108,11 @@ const uint8_t init_script[] = {
  * auto-increments per byte and rolls over into the next page, so the whole
  * frame is one stream.
  */
-const uint8_t frame_addr_read[] = {
-  CMD(0x30),                                /* extension command set 1      */
-  CMD(0x15), PAR(0x00), PAR(0x9F),          /* columns 0..159               */
-  CMD(0x75), PAR(0x00), PAR(pages - 1),     /* pages 0..12                  */
-  CMD(0x5D)                                 /* read data                    */
-};
-
 const uint8_t frame_addr[] = {
   CMD(0x30),                                /* extension command set 1      */
   CMD(0x15), PAR(0x00), PAR(0x9F),          /* columns 0..159               */
-  CMD(0x75), PAR(0x00), PAR(pages - 1),     /* pages 0..12                  */
+  CMD(0x75), PAR(0x00),
+  PAR(St75160::pages - 1),                  /* pages 0..12                  */
   CMD(0x5C)                                 /* write data                   */
 };
 
@@ -146,9 +139,7 @@ const uint8_t frame_addr[] = {
  */
 #define DMA_BUF __attribute__((section(".nocache"), aligned(4)))
 
-DMA_BUF uint8_t frame_tx[1 + fb_size];  /* control byte + framebuffer  */
-DMA_BUF uint8_t cmd_tx[2];              /* control byte + one byte     */
-DMA_BUF uint8_t rx_buf[8];              /* readback, dummy byte first  */
+DMA_BUF uint8_t frame_tx[1 + St75160::fb_size];  /* control byte + frame */
 
 /*
  * Scratch for run_co1(): a whole script emitted as one transaction with Co=1
@@ -244,14 +235,6 @@ void St75160::bus_recover(void) {
 
   palSetLineMode(cfg_.scl, cfg_.pinmode);
   palSetLineMode(cfg_.sda, cfg_.pinmode);
-}
-
-/** @brief  Sends one control byte plus one command or parameter byte. */
-bool St75160::put(uint8_t ctrl, uint8_t value) {
-
-  cmd_tx[0] = ctrl;
-  cmd_tx[1] = value;
-  return xfer(cmd_tx, sizeof cmd_tx, TIME_MS2I(100));
 }
 
 bool St75160::run_co1(const uint8_t *script, size_t len) {
@@ -403,98 +386,6 @@ int St75160::text(int x, int y, const char *s, bool on) {
   return x;
 }
 
-bool St75160::verify(void) {
-
-  static const uint8_t pattern[4] = { 0xA5U, 0x3CU, 0xFFU, 0x01U };
-
-  /* Written through the normal flush path, so this tests what the driver
-     actually does rather than a special case.*/
-  clear();
-  for (unsigned i = 0U; i < sizeof pattern; i++) {
-    fb_[i] = pattern[i];
-  }
-  if (!flush()) {
-    return false;
-  }
-
-  /* Rewind the address and enter read mode. 0x5D resets the column and page
-     counters the same way 0x5C does for writes.*/
-  if (!run_co1(frame_addr_read, sizeof frame_addr_read)) {
-    return false;
-  }
-
-  /* One dummy byte first: the controller's bus holder returns the previous
-     contents on the first read after an address set.*/
-  for (unsigned i = 0U; i < sizeof rx_buf; i++) {
-    rx_buf[i] = 0xCCU;
-  }
-
-  /* Two framings: a write of the control byte with a restart into the read,
-     and the control byte as its own transaction followed by a plain receive.
-     They exercise different paths in the I2C driver.*/
-  cmd_tx[0] = ctrl_data;
-  if (i2cMasterTransmitTimeout(cfg_.i2c, cfg_.addr,
-                               cmd_tx, 1U, rx_buf, 4U,
-                               TIME_MS2I(100)) != MSG_OK) {
-    error_flags_ = (uint32_t)i2cGetErrors(cfg_.i2c);
-  }
-
-  if (!run_co1(frame_addr_read, sizeof frame_addr_read)) {
-    return false;
-  }
-  cmd_tx[0] = ctrl_data;
-  (void)xfer(cmd_tx, 1U, TIME_MS2I(100));
-  if (i2cMasterReceiveTimeout(cfg_.i2c, cfg_.addr,
-                              &rx_buf[4], 4U, TIME_MS2I(100)) != MSG_OK) {
-    error_flags_ = (uint32_t)i2cGetErrors(cfg_.i2c);
-  }
-
-  bool ok = false;
-  for (unsigned i = 0U; i < sizeof rx_buf; i++) {
-    verify_read_[i] = rx_buf[i];
-    if (rx_buf[i] == pattern[0]) {
-      ok = true;          /* the pattern came back: data really moved */
-    }
-  }
-
-  return ok;
-}
-
-int St75160::read_status(void) {
-
-  static DMA_BUF uint8_t rx[2];
-
-  cmd_tx[0] = ctrl_cmd;
-  if (i2cMasterTransmitTimeout(cfg_.i2c, cfg_.addr,
-                               cmd_tx, 1U, rx, sizeof rx,
-                               TIME_MS2I(50)) != MSG_OK) {
-    error_flags_ = (uint32_t)i2cGetErrors(cfg_.i2c);
-    return -1;
-  }
-
-  return (int)rx[1];
-}
-
-bool St75160::fill_raw(uint8_t value) {
-
-  /* Write_enable() from the reference code: row window and write data, with
-     no column command, over the 25 page window it uses.*/
-  if (!put(ctrl_cmd, 0x75U) ||
-      !put(ctrl_data, 0x00U) ||
-      !put(ctrl_data, 0x18U) ||
-      !put(ctrl_cmd, 0x5CU)) {
-    return false;
-  }
-
-  for (unsigned i = 0U; i < (25U * width); i++) {
-    if (!put(ctrl_data, value)) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
 bool St75160::flush(void) {
 
   if (!ready_) {
@@ -506,32 +397,6 @@ bool St75160::flush(void) {
   }
 
   return xfer(frame_tx, sizeof frame_tx, TIME_MS2I(500));
-}
-
-bool St75160::display(bool on) {
-
-  return put(ctrl_cmd, 0x30U) &&
-         put(ctrl_cmd, on ? 0xAFU : 0xAEU);
-}
-
-bool St75160::all_pixels(bool on) {
-
-  return put(ctrl_cmd, 0x30U) &&
-         put(ctrl_cmd, on ? 0xA5U : 0xA4U);
-}
-
-bool St75160::inverse(bool on) {
-
-  return put(ctrl_cmd, 0x30U) &&
-         put(ctrl_cmd, on ? 0xA7U : 0xA6U);
-}
-
-bool St75160::set_vop(uint16_t vpr) {
-
-  return put(ctrl_cmd, 0x30U) &&
-         put(ctrl_cmd, 0x81U) &&
-         put(ctrl_data, (uint8_t)(vpr & 0x3FU)) &&
-         put(ctrl_data, (uint8_t)((vpr >> 6) & 0x07U));
 }
 
 void St75160::backlight(bool on) {
