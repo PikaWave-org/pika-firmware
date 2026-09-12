@@ -1,0 +1,535 @@
+#include "ch.h"
+#include "hal.h"
+
+#include "st75160.h"
+
+#include <pika/font8x8.h>
+
+namespace pika::lcd {
+namespace {
+
+/*
+ * I2C control bytes. Bit 7 is Co ("another control byte follows the data
+ * byte"), bit 6 is A0 (0 = command, 1 = command parameter or display data).
+ *
+ * Everything here uses the Co=0 form: one control byte, then bytes of that
+ * one kind until the STOP. Commands and their parameters therefore go out as
+ * separate transactions, which is exactly what Newhaven's own example code
+ * for this module does. The Co=1 interleaved form is in the datasheet's
+ * timing diagram, but this controller does not appear to honour it: driving
+ * init through Co=1 pairs left the panel showing noise, i.e. the command
+ * bytes were being taken as display data.
+ */
+constexpr uint8_t ctrl_cmd = 0x00U;   /* Co=0, A0=0: command byte      */
+constexpr uint8_t ctrl_data = 0x40U;  /* Co=0, A0=1: parameter or pixels */
+
+/* Synthetic last_error() values, outside the i2cflags_t range. */
+constexpr uint32_t err_bus_stuck = 0x80000000U;
+constexpr uint32_t err_start = 0x40000000U;
+
+/*
+ * Bus timing from the 130MHz I2C1 kernel clock (PCLK1). PRESC=12 divides it
+ * to 10MHz, so one TIMINGR tick is 100ns.
+ *
+ * With the 5.1k pull-ups fitted on the board the bus runs at the panel's
+ * maximum 400kHz: SCLL=15 is 1.6us low (min 1.3us), SCLH=8 is 0.9us high
+ * (min 0.6us), so the period is 2.5us. SCLDEL=3 is 400ns of data setup,
+ * SDADEL=1 is 100ns of data hold. 5.1k into the bus capacitance is close to
+ * the 300ns rise time fast mode allows, so if transfers ever start erroring
+ * this is the first thing to halve (SCLL=49, SCLH=39 gives 100kHz).
+ */
+const I2CConfig i2c_cfg = {
+  STM32_TIMINGR_PRESC(12U) |
+  STM32_TIMINGR_SCLDEL(3U) | STM32_TIMINGR_SDADEL(1U) |
+  STM32_TIMINGR_SCLH(8U)   | STM32_TIMINGR_SCLL(15U),
+  0U,
+  0U
+};
+
+/*
+ * Init and addressing scripts. Each entry is a tag, a length and that many
+ * bytes; OP_DELAY carries the delay in milliseconds in the length field.
+ * Command bytes are sent one transaction each, parameters likewise, matching
+ * the reference code for this module.
+ */
+enum : uint8_t { OP_CMD = 0U, OP_PAR = 1U, OP_DELAY = 2U };
+
+#define CMD(x)      OP_CMD, 1U, (uint8_t)(x)
+#define PAR(x)      OP_PAR, 1U, (uint8_t)(x)
+#define DELAY(ms)   OP_DELAY, (uint8_t)(ms)
+
+/*
+ * Initialization sequence from the NHD-C160100DiZ-FSW-FBW specification.
+ */
+const uint8_t init_otp[] = {
+  CMD(0x31),                                /* extension command set 2      */
+  CMD(0xD7), PAR(0x9F),                     /* disable auto read            */
+  CMD(0xE0), PAR(0x00),                     /* enable OTP read              */
+  DELAY(10),
+  CMD(0xE3),                                /* OTP up-load                  */
+  DELAY(20),
+  CMD(0xE1)                                 /* OTP control out              */
+};
+
+const uint8_t init_script[] = {
+  CMD(0x30),                                /* extension command set 1      */
+  CMD(0x94),                                /* sleep out                    */
+  CMD(0xAE),                                /* display off                  */
+  DELAY(50),
+  CMD(0x20), PAR(0x0B),                     /* power control: VB, VR, VF on */
+  DELAY(100),
+  CMD(0x81), PAR(0x08), PAR(0x03),          /* Vop = 11.6V                  */
+  CMD(0x31),                                /* extension command set 2      */
+  CMD(0x20),                                /* gray scale levels            */
+  PAR(0x00), PAR(0x00), PAR(0x00), PAR(0x17),
+  PAR(0x17), PAR(0x17), PAR(0x00), PAR(0x00),
+  PAR(0x1D), PAR(0x00), PAR(0x00), PAR(0x1D),
+  PAR(0x1D), PAR(0x1D), PAR(0x00), PAR(0x00),
+  CMD(0x32), PAR(0x00), PAR(0x01), PAR(0x03), /* analog set, bias 1/11      */
+  CMD(0x51), PAR(0xFB),                     /* booster level x10            */
+  CMD(0x30),                                /* extension command set 1      */
+  CMD(0xF0), PAR(0x10),                     /* display mode: monochrome     */
+  CMD(0xCA), PAR(0x00), PAR(0x63), PAR(0x00), /* display control, 100 duty  */
+  CMD(0xBC), PAR(0x00),                     /* data scan direction          */
+  CMD(0xA6),                                /* normal (not inverted)        */
+  CMD(0x31), CMD(0x40),                     /* internal power supply        */
+  CMD(0x30),                                /* extension command set 1      */
+  CMD(0x77),                                /* enable ICON RAM              */
+  CMD(0x15), PAR(0x00), PAR(0x9F),          /* columns 0..159               */
+  CMD(0x76),                                /* disable ICON RAM             */
+  CMD(0x30),                                /* extension command set 1      */
+  CMD(0x75), PAR(0x00), PAR(0x18),          /* row window                   */
+  CMD(0xAF),                                /* display on                   */
+  DELAY(200)
+};
+
+/*
+ * Addressing preamble sent before every frame. 0x5C rewinds the column and
+ * page counters to the start of the window, after which the column address
+ * auto-increments per byte and rolls over into the next page, so the whole
+ * frame is one stream.
+ */
+const uint8_t frame_addr_read[] = {
+  CMD(0x30),                                /* extension command set 1      */
+  CMD(0x15), PAR(0x00), PAR(0x9F),          /* columns 0..159               */
+  CMD(0x75), PAR(0x00), PAR(pages - 1),     /* pages 0..12                  */
+  CMD(0x5D)                                 /* read data                    */
+};
+
+const uint8_t frame_addr[] = {
+  CMD(0x30),                                /* extension command set 1      */
+  CMD(0x15), PAR(0x00), PAR(0x9F),          /* columns 0..159               */
+  CMD(0x75), PAR(0x00), PAR(pages - 1),     /* pages 0..12                  */
+  CMD(0x5C)                                 /* write data                   */
+};
+
+/*
+ * Transfer buffers, placed in D2 SRAM through the linker script's .nocache
+ * section (0x30002000 on this part).
+ *
+ * Placement is not a detail: the I2C driver moves data by DMA, DMA1/DMA2
+ * live in the D2 domain, and a buffer they cannot reach fails silently -
+ * i2cMasterTransmitTimeout() returns MSG_OK, the slave ACKs every byte, and
+ * nothing of what was meant to be sent arrives. Thread stacks are worse
+ * still, being in DTCM, which no DMA controller here can touch.
+ */
+#define DMA_BUF __attribute__((section(".nocache"), aligned(4)))
+
+DMA_BUF uint8_t frame_tx[1 + fb_size];  /* control byte + framebuffer  */
+uint8_t *const fb = &frame_tx[1];
+DMA_BUF uint8_t cmd_tx[2];              /* control byte + one byte     */
+DMA_BUF uint8_t rx_buf[8];              /* readback, dummy byte first  */
+
+uint32_t error_flags;
+bool ready;
+
+void bus_recover(void);
+
+bool xfer(const uint8_t *buf, size_t len, sysinterval_t timeout) {
+
+  /* A transfer that timed out leaves the driver in I2C_LOCKED, and the high
+     level driver asserts on any further call in that state, so the bus is
+     restarted before giving up on the transfer.*/
+  if (BOARD_LCD_I2C.state != I2C_READY) {
+    bus_recover();
+    if (i2cStart(&BOARD_LCD_I2C, &i2c_cfg) != HAL_RET_SUCCESS) {
+      error_flags = err_start;
+      return false;
+    }
+  }
+
+  msg_t msg = i2cMasterTransmitTimeout(&BOARD_LCD_I2C, BOARD_LCD_I2C_ADDR,
+                                       buf, len, nullptr, 0, timeout);
+  if (msg != MSG_OK) {
+    error_flags = (uint32_t)i2cGetErrors(&BOARD_LCD_I2C);
+    if (error_flags == 0U) {
+      /* MSG_TIMEOUT with no error flag: the peripheral never saw an idle
+         bus, i.e. SCL or SDA is stuck low.*/
+      error_flags = err_bus_stuck;
+    }
+    return false;
+  }
+  return true;
+}
+
+/*
+ * I2C bus recovery, run before the peripheral is started.
+ *
+ * Both the panel and the STM32 can be left holding a line low across a reset
+ * that lands in the middle of a transfer: the panel stretches SCL or keeps
+ * SDA low waiting for the rest of a byte, and the STM32 latches BUSY and then
+ * drives SCL low itself, at which point every transfer times out for good.
+ * Releasing the pins to GPIO, clocking out any half sent byte and issuing a
+ * STOP puts the bus back into the idle state.
+ */
+void bus_recover(void) {
+
+  i2cStop(&BOARD_LCD_I2C);
+
+  /* The output latches have to be set before the pins become outputs: they
+     come out of reset at zero, so switching mode first would pull both lines
+     low for as long as it takes to set them, which the panel sees as a START
+     and which leaves the bus busy - the very state this is here to clear.*/
+  palSetLine(LINE_LCD_SCL);
+  palSetLine(LINE_LCD_SDA);
+  palSetLineMode(LINE_LCD_SCL, PAL_MODE_OUTPUT_OPENDRAIN);
+  palSetLineMode(LINE_LCD_SDA, PAL_MODE_OUTPUT_OPENDRAIN);
+  chThdSleepMilliseconds(1);
+
+  /* Up to one byte plus its ACK of clocks, stopping as soon as the slave
+     lets SDA go.*/
+  for (int i = 0; (i < 9) && (palReadLine(LINE_LCD_SDA) == PAL_LOW); i++) {
+    palClearLine(LINE_LCD_SCL);
+    chThdSleepMicroseconds(5);
+    palSetLine(LINE_LCD_SCL);
+    chThdSleepMicroseconds(5);
+  }
+
+  /* STOP condition: SDA rises while SCL is high.*/
+  palClearLine(LINE_LCD_SDA);
+  chThdSleepMicroseconds(5);
+  palSetLine(LINE_LCD_SCL);
+  chThdSleepMicroseconds(5);
+  palSetLine(LINE_LCD_SDA);
+  chThdSleepMicroseconds(5);
+
+  palSetLineMode(LINE_LCD_SCL, BOARD_LCD_I2C_PINMODE);
+  palSetLineMode(LINE_LCD_SDA, BOARD_LCD_I2C_PINMODE);
+}
+
+/** @brief  Sends one control byte plus one command or parameter byte. */
+bool put(uint8_t ctrl, uint8_t value) {
+
+  cmd_tx[0] = ctrl;
+  cmd_tx[1] = value;
+  return xfer(cmd_tx, sizeof cmd_tx, TIME_MS2I(100));
+}
+
+/*
+ * Same script, emitted as a single transaction with Co=1 control bytes, so
+ * each command's parameters follow it without an intervening STOP. The
+ * vendor's code uses one transaction per byte instead; which of the two this
+ * controller actually honours is what the selftest is here to establish.
+ */
+DMA_BUF uint8_t seq_buf[192];
+
+bool run_co1(const uint8_t *script, size_t len) {
+
+  size_t i = 0U;
+  size_t n = 0U;
+
+  while (i < len) {
+    uint8_t op = script[i++];
+    uint8_t arg = script[i++];
+
+    if (op == OP_DELAY) {
+      if ((n > 0U) && !xfer(seq_buf, n, TIME_MS2I(100))) {
+        return false;
+      }
+      n = 0U;
+      chThdSleepMilliseconds(arg);
+      continue;
+    }
+
+    if (n > (sizeof seq_buf - 2U)) {
+      if (!xfer(seq_buf, n, TIME_MS2I(100))) {
+        return false;
+      }
+      n = 0U;
+    }
+
+    seq_buf[n++] = (op == OP_CMD) ? 0x80U : 0xC0U;
+    seq_buf[n++] = script[i++];
+  }
+
+  return (n == 0U) || xfer(seq_buf, n, TIME_MS2I(100));
+}
+
+} /* anonymous namespace */
+
+uint8_t verify_read[8];
+
+bool init(bool skip_otp) {
+
+  error_flags = 0U;
+  ready = false;
+  frame_tx[0] = ctrl_data;
+  clear();
+
+  /* Reset pulse. The datasheet only asks for 1us low and 1ms of settling,
+     but the vendor's reference code uses 200ms and 100ms, so use those.*/
+  palClearLine(LINE_LCD_RST);
+  chThdSleepMilliseconds(200);
+  palSetLine(LINE_LCD_RST);
+  chThdSleepMilliseconds(100);
+
+  bus_recover();
+
+  if (i2cStart(&BOARD_LCD_I2C, &i2c_cfg) != HAL_RET_SUCCESS) {
+    error_flags = err_start;
+    return false;
+  }
+
+  /* The OTP up-load also disables the controller's own auto-read of the
+     factory trim, so skipping the whole block leaves the power-on values in
+     place, which is the safer of the two if the manual load misbehaves.*/
+  if (!skip_otp && !run_co1(init_otp, sizeof init_otp)) {
+    return false;
+  }
+
+  if (!run_co1(init_script, sizeof init_script)) {
+    return false;
+  }
+
+  ready = true;
+  if (!flush()) {
+    ready = false;
+    return false;
+  }
+
+  return true;
+}
+
+void clear(bool on) {
+
+  uint8_t v = on ? 0xFFU : 0x00U;
+  for (unsigned i = 0U; i < fb_size; i++) {
+    fb[i] = v;
+  }
+}
+
+void pixel(int x, int y, bool on) {
+
+  if ((x < 0) || (x >= width) || (y < 0) || (y >= height)) {
+    return;
+  }
+
+  /* The panel's rows run bottom to top as far as the controller is
+     concerned, so y is flipped here and the API above is a plain top-left
+     origin. The controller has no command for this: 0xBC only covers the
+     address scan direction and the column order.*/
+  y = height - 1 - y;
+
+  /* One byte covers 8 rows of one column, D7 being the topmost row.*/
+  uint8_t mask = (uint8_t)(1U << (7 - (y & 7)));
+  uint8_t *p = &fb[((unsigned)y / 8U) * width + (unsigned)x];
+
+  if (on) {
+    *p |= mask;
+  }
+  else {
+    *p &= (uint8_t)~mask;
+  }
+}
+
+void rect(int x, int y, int w, int h, bool on) {
+
+  for (int j = y; j < (y + h); j++) {
+    for (int i = x; i < (x + w); i++) {
+      pixel(i, j, on);
+    }
+  }
+}
+
+void frame(int x, int y, int w, int h, bool on) {
+
+  for (int i = x; i < (x + w); i++) {
+    pixel(i, y, on);
+    pixel(i, y + h - 1, on);
+  }
+  for (int j = y; j < (y + h); j++) {
+    pixel(x, j, on);
+    pixel(x + w - 1, j, on);
+  }
+}
+
+int text(int x, int y, const char *s, bool on) {
+
+  for (; *s != '\0'; s++) {
+    char c = *s;
+    if ((c < font8x8_first) || (c > font8x8_last)) {
+      c = '?';
+    }
+
+    const uint8_t *glyph = font8x8[c - font8x8_first];
+    for (int row = 0; row < 8; row++) {
+      uint8_t bits = glyph[row];
+      for (int col = 0; col < 8; col++) {
+        if (((bits >> col) & 1U) != 0U) {
+          pixel(x + col, y + row, on);
+        }
+      }
+    }
+    x += 8;
+  }
+
+  return x;
+}
+
+bool verify(void) {
+
+  static const uint8_t pattern[4] = { 0xA5U, 0x3CU, 0xFFU, 0x01U };
+
+  /* Written through the normal flush path, so this tests what the driver
+     actually does rather than a special case.*/
+  clear();
+  for (unsigned i = 0U; i < sizeof pattern; i++) {
+    fb[i] = pattern[i];
+  }
+  if (!flush()) {
+    return false;
+  }
+
+  /* Rewind the address and enter read mode. 0x5D resets the column and page
+     counters the same way 0x5C does for writes.*/
+  if (!run_co1(frame_addr_read, sizeof frame_addr_read)) {
+    return false;
+  }
+
+  /* One dummy byte first: the controller's bus holder returns the previous
+     contents on the first read after an address set.*/
+  for (unsigned i = 0U; i < sizeof rx_buf; i++) {
+    rx_buf[i] = 0xCCU;
+  }
+
+  /* Two framings: a write of the control byte with a restart into the read,
+     and the control byte as its own transaction followed by a plain receive.
+     They exercise different paths in the I2C driver.*/
+  cmd_tx[0] = ctrl_data;
+  if (i2cMasterTransmitTimeout(&BOARD_LCD_I2C, BOARD_LCD_I2C_ADDR,
+                               cmd_tx, 1U, rx_buf, 4U,
+                               TIME_MS2I(100)) != MSG_OK) {
+    error_flags = (uint32_t)i2cGetErrors(&BOARD_LCD_I2C);
+  }
+
+  if (!run_co1(frame_addr_read, sizeof frame_addr_read)) {
+    return false;
+  }
+  cmd_tx[0] = ctrl_data;
+  (void)xfer(cmd_tx, 1U, TIME_MS2I(100));
+  if (i2cMasterReceiveTimeout(&BOARD_LCD_I2C, BOARD_LCD_I2C_ADDR,
+                              &rx_buf[4], 4U, TIME_MS2I(100)) != MSG_OK) {
+    error_flags = (uint32_t)i2cGetErrors(&BOARD_LCD_I2C);
+  }
+
+  bool ok = false;
+  for (unsigned i = 0U; i < sizeof rx_buf; i++) {
+    verify_read[i] = rx_buf[i];
+    if (rx_buf[i] == pattern[0]) {
+      ok = true;          /* the pattern came back: data really moved */
+    }
+  }
+
+  return ok;
+}
+
+int read_status(void) {
+
+  static DMA_BUF uint8_t rx[2];
+
+  cmd_tx[0] = ctrl_cmd;
+  if (i2cMasterTransmitTimeout(&BOARD_LCD_I2C, BOARD_LCD_I2C_ADDR,
+                               cmd_tx, 1U, rx, sizeof rx,
+                               TIME_MS2I(50)) != MSG_OK) {
+    error_flags = (uint32_t)i2cGetErrors(&BOARD_LCD_I2C);
+    return -1;
+  }
+
+  return (int)rx[1];
+}
+
+bool fill_raw(uint8_t value) {
+
+  /* Write_enable() from the reference code: row window and write data, with
+     no column command, over the 25 page window it uses.*/
+  if (!put(ctrl_cmd, 0x75U) ||
+      !put(ctrl_data, 0x00U) ||
+      !put(ctrl_data, 0x18U) ||
+      !put(ctrl_cmd, 0x5CU)) {
+    return false;
+  }
+
+  for (unsigned i = 0U; i < (25U * width); i++) {
+    if (!put(ctrl_data, value)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool flush(void) {
+
+  if (!ready) {
+    return false;
+  }
+
+  if (!run_co1(frame_addr, sizeof frame_addr)) {
+    return false;
+  }
+
+  return xfer(frame_tx, sizeof frame_tx, TIME_MS2I(500));
+}
+
+bool display(bool on) {
+
+  return put(ctrl_cmd, 0x30U) &&
+         put(ctrl_cmd, on ? 0xAFU : 0xAEU);
+}
+
+bool all_pixels(bool on) {
+
+  return put(ctrl_cmd, 0x30U) &&
+         put(ctrl_cmd, on ? 0xA5U : 0xA4U);
+}
+
+bool inverse(bool on) {
+
+  return put(ctrl_cmd, 0x30U) &&
+         put(ctrl_cmd, on ? 0xA7U : 0xA6U);
+}
+
+bool set_vop(uint16_t vpr) {
+
+  return put(ctrl_cmd, 0x30U) &&
+         put(ctrl_cmd, 0x81U) &&
+         put(ctrl_data, (uint8_t)(vpr & 0x3FU)) &&
+         put(ctrl_data, (uint8_t)((vpr >> 6) & 0x07U));
+}
+
+void backlight(bool on) {
+
+  if (on) {
+    palSetLine(LINE_LCD_BKLT);
+  }
+  else {
+    palClearLine(LINE_LCD_BKLT);
+  }
+}
+
+uint32_t last_error(void) {
+
+  return error_flags;
+}
+
+} /* namespace pika::lcd */

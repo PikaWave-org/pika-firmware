@@ -1,7 +1,7 @@
 #include "ch.h"
 #include "hal.h"
 
-#include "log.h"
+#include <pika/log.h>
 
 /*
  * Test image: same board, different firmware. Flashes the backlight fast so
@@ -34,7 +34,7 @@ int main(void) {
   halInit();
   chSysInit();
 
-  log_init();
+  pika::log_init();
   LOG("\r\n" BOARD_NAME " test image starting");
 
   chThdCreateStatic(waHeartbeat, sizeof(waHeartbeat), NORMALPRIO, heartbeat,

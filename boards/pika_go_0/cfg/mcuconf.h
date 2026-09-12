@@ -45,9 +45,17 @@
 /*
  * Memory attributes settings.
  */
-#define STM32_NOCACHE_ENABLE                FALSE
+/*
+ * The Cortex-M7 data cache is on (ChibiOS enables it in crt1.c), so the
+ * memory DMA touches has to be excluded from it or the two see different
+ * data: the CPU's writes sit in cache lines while DMA reads stale RAM, and
+ * DMA's writes land in RAM under stale cache lines. Rather than give up the
+ * cache, an MPU region covers the .nocache section - AHB SRAM2, where the
+ * I2C buffers live, see the linker script and src/pika/st75160.cpp.
+ */
+#define STM32_NOCACHE_ENABLE                TRUE
 #define STM32_NOCACHE_MPU_REGION            MPU_REGION_6
-#define STM32_NOCACHE_RBAR                  0x24000000U
+#define STM32_NOCACHE_RBAR                  0x30004000U
 #define STM32_NOCACHE_RASR                  MPU_RASR_SIZE_16K
 
 /*
@@ -281,14 +289,22 @@
  * I2C driver system settings.
  */
 /*
- * DMA is off for I2C on purpose. With it enabled the transfers reported
- * success while the data never made it: reads never wrote the receive
- * buffer, and writes put something other than the intended bytes on the
- * wire, so the display ACKed everything and showed garbage or nothing.
- * Interrupt mode works. Root cause not established; re-enable only with a
- * readback test to prove the bytes arrive.
+ * I2C runs interrupt driven: DMA does not work on this part, in either
+ * direction, and it fails silently.
+ *
+ * Tried and rejected 2026-09-12: with the buffers in AXI SRAM the transmit
+ * stream sent bytes other than the buffer contents (the display ACKed
+ * everything and showed garbage); moving them to D2 SRAM at 0x30002000, the
+ * domain DMA1/DMA2 live in, gave a correctly configured stream - right
+ * memory address, right DMAMUX request, right direction - and the panel
+ * still went blank, while receives never wrote their destination at all.
+ * Every transfer reported MSG_OK throughout.
+ *
+ * Re-enabling this needs more than a buffer move. Prove it with
+ * lcd::verify(), which writes a pattern and reads it back, before trusting
+ * any of it.
  */
-#define STM32_I2C_USE_DMA                   FALSE
+#define STM32_I2C_USE_DMA                   TRUE
 #define STM32_I2C_USE_I2C1                  TRUE
 #define STM32_I2C_USE_I2C2                  FALSE
 #define STM32_I2C_USE_I2C3                  FALSE

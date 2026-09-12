@@ -20,6 +20,17 @@
 /* Driver local functions.                                                   */
 /*===========================================================================*/
 
+/*
+ * D2 SRAM (0x30000000) has its own clock gates and comes out of reset with
+ * them off, so the memory silently ignores accesses until they are enabled.
+ * The I2C DMA buffers live there, so this has to happen before any of it is
+ * touched. The .nocache section is NOLOAD, so startup never writes to it.
+ */
+static void stm32_d2_sram_init(void) {
+
+  rccEnableAHB2(RCC_AHB2ENR_SRAM1EN | RCC_AHB2ENR_SRAM2EN, false);
+}
+
 static void stm32_gpio_init(void) {
 
   /* Enabling GPIO-related clocks, the mask comes from the
@@ -59,6 +70,7 @@ static void stm32_gpio_init(void) {
  */
 void __early_init(void) {
 
+  stm32_d2_sram_init();
   stm32_gpio_init();
   stm32_clock_init();
 }

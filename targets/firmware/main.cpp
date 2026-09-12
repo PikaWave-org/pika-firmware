@@ -3,8 +3,13 @@
 
 #include "chprintf.h"
 
-#include "log.h"
-#include "st75160.h"
+#include <pika/log.h>
+#include <pika/st75160.h>
+
+namespace lcd = pika::lcd;
+
+/* Last measured frame time, in milliseconds. */
+uint32_t flush_ms;
 
 /*
  * Bring-up image: a border, a checkerboard block, a diagonal and a text
@@ -54,12 +59,13 @@ static THD_FUNCTION(heartbeat, arg) {
     systime_t start = chVTGetSystemTimeX();
     bool ok = lcd::flush();
     sysinterval_t took = chVTTimeElapsedSinceX(start);
+    flush_ms = (uint32_t)TIME_I2MS(took);
 
     if (!ok) {
       LOG("lcd: flush failed, i2c error 0x%08x", (unsigned)lcd::last_error());
     }
     else if (beat == 0) {
-      LOG("lcd: flush took %ums", (unsigned)TIME_I2MS(took));
+      LOG("lcd: flush took %ums", (unsigned)flush_ms);
     }
 
     beat++;
@@ -72,7 +78,7 @@ int main(void) {
   halInit();
   chSysInit();
 
-  log_init();
+  pika::log_init();
   LOG("\r\n" BOARD_NAME " starting");
 
   lcd::backlight(true);
@@ -82,6 +88,14 @@ int main(void) {
       (unsigned)lcd::last_error(), (unsigned)lcd::read_status());
 
   if (ok) {
+    bool verified = lcd::verify();
+    LOG("lcd: readback %s, got %02x %02x %02x %02x %02x %02x %02x %02x",
+        verified ? "ok" : "NO DATA",
+        (unsigned)lcd::verify_read[0], (unsigned)lcd::verify_read[1],
+        (unsigned)lcd::verify_read[2], (unsigned)lcd::verify_read[3],
+        (unsigned)lcd::verify_read[4], (unsigned)lcd::verify_read[5],
+        (unsigned)lcd::verify_read[6], (unsigned)lcd::verify_read[7]);
+
     draw_test_image();
     if (!lcd::flush()) {
       LOG("lcd: flush failed, i2c error 0x%08x", (unsigned)lcd::last_error());
