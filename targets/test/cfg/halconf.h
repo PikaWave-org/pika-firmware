@@ -25,8 +25,7 @@
  * @{
  */
 
-#ifndef HALCONF_H
-#define HALCONF_H
+#pragma once
 
 #define _CHIBIOS_HAL_CONF_
 #define _CHIBIOS_HAL_CONF_VER_9_1_
@@ -562,7 +561,5 @@
 #if !defined(WSPI_USE_MUTUAL_EXCLUSION) || defined(__DOXYGEN__)
 #define WSPI_USE_MUTUAL_EXCLUSION           TRUE
 #endif
-
-#endif /* HALCONF_H */
 
 /** @} */

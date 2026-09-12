@@ -45,8 +45,7 @@
  *        and no reason to limit the class to a single instance.
  */
 
-#ifndef PIKA_UBLOX_H
-#define PIKA_UBLOX_H
+#pragma once
 
 #include <cstdint>
 
@@ -280,4 +279,3 @@ private:
 
 } /* namespace pika::gnss */
 
-#endif /* PIKA_UBLOX_H */

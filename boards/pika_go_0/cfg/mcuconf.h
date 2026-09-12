@@ -14,8 +14,7 @@
     limitations under the License.
 */
 
-#ifndef MCUCONF_H
-#define MCUCONF_H
+#pragma once
 
 /*
  * STM32H723/33/25/35 drivers configuration.
@@ -552,4 +551,3 @@
 #define STM32_WSPI_OCTOSPI2_MDMA_IRQ_PRIORITY 10
 #define STM32_WSPI_DMA_ERROR_HOOK(wspip)    osalSysHalt("MDMA failure")
 
-#endif /* MCUCONF_H */

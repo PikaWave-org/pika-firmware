@@ -8,8 +8,7 @@
  * Layout: font8x8[c - 0x20][row] holds one glyph row, bit 0 = leftmost pixel.
  */
 
-#ifndef PIKA_FONT8X8_H
-#define PIKA_FONT8X8_H
+#pragma once
 
 #include <cstdint>
 
@@ -118,4 +117,3 @@ const uint8_t font8x8[95][8] = {
 
 } /* namespace pika */
 
-#endif /* PIKA_FONT8X8_H */

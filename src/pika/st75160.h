@@ -26,8 +26,7 @@
  *        is therefore the supported case - see the buffer comment in the .cpp.
  */
 
-#ifndef PIKA_ST75160_H
-#define PIKA_ST75160_H
+#pragma once
 
 #include <cstdint>
 
@@ -108,4 +107,3 @@ private:
 
 } /* namespace pika::lcd */
 
-#endif /* PIKA_ST75160_H */

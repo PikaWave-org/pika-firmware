@@ -31,8 +31,7 @@
  *        supported case - see the buffer comment in the .cpp.
  */
 
-#ifndef PIKA_SPEAKER_H
-#define PIKA_SPEAKER_H
+#pragma once
 
 #include <cstdint>
 
@@ -180,4 +179,3 @@ private:
 
 } /* namespace pika::spk */
 
-#endif /* PIKA_SPEAKER_H */

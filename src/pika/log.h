@@ -16,8 +16,7 @@
  * CHPRINTF_USE_FLOAT is enabled, no length modifiers beyond l/L.
  */
 
-#ifndef PIKA_LOG_H
-#define PIKA_LOG_H
+#pragma once
 
 namespace pika {
 
@@ -45,4 +44,3 @@ void log_printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 #define LOG(fmt, ...)                                                       \
   pika::log_printf(fmt "\r\n" __VA_OPT__(, ) __VA_ARGS__)
 
-#endif /* PIKA_LOG_H */

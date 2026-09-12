@@ -11,8 +11,7 @@
  * pinout in as the hardware is defined.
  */
 
-#ifndef BOARD_H
-#define BOARD_H
+#pragma once
 
 /*===========================================================================*/
 /* Board identification.                                                     */
@@ -161,4 +160,3 @@ extern "C" {
 #endif
 #endif /* _FROM_ASM_ */
 
-#endif /* BOARD_H */
