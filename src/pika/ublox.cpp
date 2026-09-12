@@ -265,7 +265,7 @@ void Ublox::dispatch(void) {
 
 void Ublox::decode_nav_pvt(void) {
 
-  if (msg_len_ < nav_pvt_len) {
+  if (msg_len_ < ubx_nav_pvt::len) {
     /* A shorter payload means an older protocol version laying the fields out
        differently; decoding it against these offsets would yield plausible
        nonsense, so it is counted and dropped instead.*/

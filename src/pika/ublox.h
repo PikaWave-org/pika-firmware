@@ -61,9 +61,6 @@
  */
 namespace pika::gnss {
 
-/** @brief  UBX-NAV-PVT payload length, protocol version 15 and later. */
-constexpr uint16_t nav_pvt_len = 92U;
-
 /* Values of ubx_nav_pvt::fixType. */
 constexpr uint8_t fix_type_none = 0U;
 constexpr uint8_t fix_type_dead_reckoning = 1U;
@@ -97,6 +94,10 @@ constexpr uint8_t flags_head_veh_valid = 0x20U;
  *          The reserved bytes of the message are therefore not carried.
  */
 struct ubx_nav_pvt {
+
+  /** @brief  Payload length on the wire, protocol version 15 and later. */
+  static constexpr uint16_t len = 92U;
+
   uint32_t iTOW;           /**< GPS time of week, milliseconds.              */
 
   uint16_t year;           /**< UTC year, 1999..2099.                        */
