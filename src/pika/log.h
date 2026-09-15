@@ -25,7 +25,7 @@ namespace pika {
  * @note    Call once from main(), after chSysInit(). Lines logged before
  *          this are dropped.
  */
-void log_init(void);
+void log_init();
 
 /**
  * @brief   Writes one timestamped, chprintf() formatted message.

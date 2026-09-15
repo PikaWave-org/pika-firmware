@@ -202,7 +202,7 @@ bool St75160::xfer(const uint8_t *buf, size_t len, sysinterval_t timeout) {
  * Releasing the pins to GPIO, clocking out any half sent byte and issuing a
  * STOP puts the bus back into the idle state.
  */
-void St75160::bus_recover(void) {
+void St75160::bus_recover() {
 
   i2cStop(cfg_.i2c);
 
@@ -386,7 +386,7 @@ int St75160::text(int x, int y, const char *s, bool on) {
   return x;
 }
 
-bool St75160::flush(void) {
+bool St75160::flush() {
 
   if (!ready_) {
     return false;

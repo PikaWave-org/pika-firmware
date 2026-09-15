@@ -29,7 +29,7 @@ static THD_FUNCTION(heartbeat, arg) {
   }
 }
 
-int main(void) {
+int main() {
 
   halInit();
   chSysInit();

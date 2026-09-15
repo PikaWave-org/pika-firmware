@@ -13,6 +13,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 include(${PROJECT_ROOT}/cmake/chibios.cmake)
+include(${PROJECT_ROOT}/cmake/audio.cmake)
 include(${PROJECT_ROOT}/boards/pika_go_0/board.cmake)
 
 add_subdirectory(targets/firmware)

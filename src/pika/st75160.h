@@ -85,18 +85,18 @@ public:
   int text(int x, int y, const char *s, bool on = true);
 
   /** @brief  Sends the framebuffer to the panel. */
-  bool flush(void);
+  bool flush();
 
   /** @brief  Switches the backlight. */
   void backlight(bool on);
 
   /** @brief  I2C error flags from the last failed transaction, 0 if none. */
-  uint32_t last_error(void) const { return error_flags_; }
+  uint32_t last_error() const { return error_flags_; }
 
 private:
 
   bool xfer(const uint8_t *buf, size_t len, sysinterval_t timeout);
-  void bus_recover(void);
+  void bus_recover();
   bool run_co1(const uint8_t *script, size_t len);
 
   Config cfg_;

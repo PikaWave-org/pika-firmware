@@ -26,14 +26,14 @@ BaseSequentialStream *const stream =
  * (CH_CFG_ST_RESOLUTION), so at CH_CFG_ST_FREQUENCY = 10kHz the timestamp
  * wraps back to zero after ~4.9 days of uptime.
  */
-uint32_t uptime_ms(void) {
+uint32_t uptime_ms() {
 
   return (uint32_t)chTimeI2MS((sysinterval_t)chVTGetSystemTimeX());
 }
 
 } /* anonymous namespace */
 
-void log_init(void) {
+void log_init() {
 
   chMtxObjectInit(&lock);
   sdStart(&BOARD_DBG_SERIAL, nullptr);

@@ -1,282 +1,251 @@
-/*
- * Driver for a u-blox GNSS receiver on a UART, speaking the UBX binary
- * protocol.
+/**
+ * @file ublox.h
+ * Driver for a u-blox GNSS receiver connected via serial port.
  *
- * Nothing here is specific to one part: UBX framing, the CFG messages used to
- * set the port up and UBX-NAV-PVT are common across the u-blox generations,
- * so this is named for the protocol rather than for the receiver. The module
- * on pika_go_0 is a CAM-M8Q-0, an M8 concurrent GNSS module with an
- * integrated chip antenna, but the driver only assumes a receiver that speaks
- * UBX and that is protocol version 15 or later - which is where NAV-PVT
- * arrived, and which every M8 satisfies.
+ * Adapted from the microavia UBX driver. The framing, the packed message
+ * structs and the configuration handshake are that driver's; what changed is
+ * the platform underneath it - ChibiOS instead of the microavia Task and
+ * SerialPort, std::span instead of Slice - and the output, which stays in
+ * memory behind the getters below instead of being published to a topic.
  *
- * The receiver's wiring - which serial driver it sits behind and the two baud
- * rates involved - is passed in as a Config at construction, so the driver
- * itself does not depend on any board header. The board's own BOARD_GNSS_*
- * definitions are what the caller fills the Config from.
- *
- * NMEA is switched off during init(), which halves the bytes on the wire and
- * removes the ambiguity of parsing two framings out of one stream. Position,
- * velocity and time then all arrive in a single UBX-NAV-PVT message.
- *
- * u-blox modules power up at 9600 baud; init() moves the link to whatever
- * Config asks for (see the bring-up note on init() for the ordering, which is
- * not obvious). Nothing is persisted in the receiver: without backup power
- * the settings would not survive anyway, so the sequence is simply re-run on
- * every boot.
+ * Nothing here is specific to one receiver: UBX framing, the CFG messages and
+ * NAV-PVT are common across the u-blox generations. The module on pika_go_0
+ * is a CAM-M8Q-0, an M8 part, so NAV-PVT is what gets enabled.
  *
  * Usage:
  *
  *   static const pika::gnss::Ublox::Config gnss_cfg = {
- *     &BOARD_GNSS_SERIAL, BOARD_GNSS_BAUD_BOOT, BOARD_GNSS_BAUD_RUN, 1000U
+ *     &BOARD_GNSS_SERIAL, BOARD_GNSS_BAUD_RUN, 1000U, 1
  *   };
  *   static pika::gnss::Ublox gnss{gnss_cfg};
  *
- *   gnss.init();
- *   while (true) {
- *     if (gnss.poll(TIME_MS2I(1500))) {
- *       pika::gnss::ubx_nav_pvt pvt = gnss.nav_pvt();
- *     }
- *   }
+ *   chThdCreateStatic(waGnss, sizeof(waGnss), NORMALPRIO, gnss_thread, &gnss);
+ *   // ... in that thread: gnss.run();
  *
- * @note  poll() blocks, so it wants a thread of its own. Unlike the LCD
- *        driver, everything here lives in the instance: the serial driver's
- *        queues are ordinary SRAM, so there is no DMA placement constraint
- *        and no reason to limit the class to a single instance.
+ *   pika::gnss::msg_rx_nav_pvt_s pvt;
+ *   if (gnss.nav_pvt(pvt)) { ... }
  */
 
 #pragma once
 
 #include <cstdint>
+#include <span>
 
 #include "ch.h"
 #include "hal.h"
 
-/*
- * Everything the UBX protocol defines stays at namespace scope: the message
- * and the encoding of its fields are properties of the protocol, not of this
- * driver, and pika::gnss::Ublox::ubx_nav_pvt would only stutter. What belongs
- * to the driver - its Config, its counters and its error codes - is scoped
- * inside the class, as the LCD driver does.
- */
 namespace pika::gnss {
 
-/* Values of ubx_nav_pvt::fixType. */
-constexpr uint8_t fix_type_none = 0U;
-constexpr uint8_t fix_type_dead_reckoning = 1U;
-constexpr uint8_t fix_type_2d = 2U;
-constexpr uint8_t fix_type_3d = 3U;
-constexpr uint8_t fix_type_gnss_dead_reckoning = 4U;
-constexpr uint8_t fix_type_time_only = 5U;
-
-/* Bits of ubx_nav_pvt::valid. */
-constexpr uint8_t valid_date = 0x01U;
-constexpr uint8_t valid_time = 0x02U;
-constexpr uint8_t valid_fully_resolved = 0x04U;
-constexpr uint8_t valid_mag = 0x08U;
-
-/* Bits of ubx_nav_pvt::flags. */
-constexpr uint8_t flags_gnss_fix_ok = 0x01U;
-constexpr uint8_t flags_diff_soln = 0x02U;
-constexpr uint8_t flags_head_veh_valid = 0x20U;
+#pragma pack(push, 1)
 
 /**
- * @brief   The UBX-NAV-PVT message: position, velocity and time in one.
- * @details Field names and units are u-blox's own, so this reads directly
- *          against the interface description rather than needing a mental
- *          translation step. Nothing is scaled or converted on the way in -
- *          the fixed point units are kept as sent and the caller scales once,
- *          at the point of use, so no precision is lost here.
- *
- *          This mirrors the message rather than being cast over it: the
- *          decoder reads each field by explicit offset, which keeps it
- *          independent of how the compiler would lay a packed struct out.
- *          The reserved bytes of the message are therefore not carried.
+ * @brief   RX NAV-PVT, the navigation solution: position, velocity and time.
+ * @note    Units are u-blox's own. This is the wire layout, cast in place out
+ *          of the receive buffer, so the field order is the message's and the
+ *          reserved bytes are present.
  */
-struct ubx_nav_pvt {
-
-  /** @brief  Payload length on the wire, protocol version 15 and later. */
-  static constexpr uint16_t len = 92U;
-
-  uint32_t iTOW;           /**< GPS time of week, milliseconds.              */
-
-  uint16_t year;           /**< UTC year, 1999..2099.                        */
-  uint8_t  month;          /**< UTC month, 1..12.                            */
-  uint8_t  day;            /**< UTC day, 1..31.                              */
-  uint8_t  hour;           /**< UTC hour, 0..23.                             */
-  uint8_t  min;            /**< UTC minute, 0..59.                           */
-  uint8_t  sec;            /**< UTC second, 0..60.                           */
-  uint8_t  valid;          /**< Validity flags, the valid_* bits above.      */
-  uint32_t tAcc;           /**< Time accuracy estimate, nanoseconds.         */
-  int32_t  nano;           /**< Fraction of second, -1e9..1e9 nanoseconds.   */
-
-  uint8_t  fixType;        /**< One of the fix_type_* constants above.       */
-  uint8_t  flags;          /**< Fix status flags, the flags_* bits above.    */
-  uint8_t  flags2;         /**< Additional flags, UTC standard and epoch.    */
-  uint8_t  numSV;          /**< Satellites used in the solution.             */
-
-  int32_t  lon;            /**< Longitude, 1e-7 degrees.                     */
-  int32_t  lat;            /**< Latitude, 1e-7 degrees.                      */
-  int32_t  height;         /**< Height above the ellipsoid, millimetres.     */
-  int32_t  hMSL;           /**< Height above mean sea level, millimetres.    */
-  uint32_t hAcc;           /**< Horizontal accuracy estimate, millimetres.   */
-  uint32_t vAcc;           /**< Vertical accuracy estimate, millimetres.     */
-
-  int32_t  velN;           /**< North velocity, millimetres per second.      */
-  int32_t  velE;           /**< East velocity, millimetres per second.       */
-  int32_t  velD;           /**< Down velocity, millimetres per second.       */
-  int32_t  gSpeed;         /**< Ground speed, 2D, millimetres per second.    */
-  int32_t  headMot;        /**< Heading of motion, 2D, 1e-5 degrees.         */
-  uint32_t sAcc;           /**< Speed accuracy estimate, millimetres/second. */
-  uint32_t headAcc;        /**< Heading accuracy estimate, 1e-5 degrees.     */
-
-  uint16_t pDOP;           /**< Position DOP, 0.01 units.                    */
-
-  /* Dead reckoning and magnetometer fields. The CAM-M8Q is a plain GNSS
-     receiver, not an ADR or UDR product, so it leaves these at zero.*/
-  int32_t  headVeh;        /**< Heading of vehicle, 2D, 1e-5 degrees.        */
-  int16_t  magDec;         /**< Magnetic declination, 1e-2 degrees.          */
-  uint16_t magAcc;         /**< Declination accuracy, 1e-2 degrees.          */
+struct msg_rx_nav_pvt_s {
+    uint32_t iTOW;      ///< GPS Time of Week [ms]
+    uint16_t year;      ///< Year, range 1999..2099 (UTC)
+    uint8_t month;      ///< Month, range 1..12 (UTC)
+    uint8_t day;        ///< Day of month, range 1..31 (UTC)
+    uint8_t hour;       ///< Hour of day, range 0..23 (UTC)
+    uint8_t min;        ///< Minute of hour, range 0..59 (UTC)
+    uint8_t sec;        ///< Seconds of minute, range 0..60 (UTC)
+    uint8_t valid;      ///< Validity Flags (bit 0: validDate, bit 1: validTime, bit 2: fullyResolved)
+    uint32_t tAcc;      ///< Time accuracy estimate (UTC) [ns]
+    int32_t nano;       ///< Fraction of second, range -1e9 .. 1e9 (UTC) [ns]
+    uint8_t fixType;    ///< GNSS fix type (0: no fix, 1: dead reckoning only, 2: 2D-fix, 3: 3D-fix, 4: GNSS + dead reckoning combined, 5: time only fix)
+    uint8_t flags;      ///< Fix status flags (bit 0: gnssFixOK, bit 1: diffSoln, bit 4: psmState, bit 5: headVehValid, bit 6: RTKfloat)
+    uint8_t flags2;     ///< Additional flags (bit 5: confirmedAvai, bit 6: confirmedDate, bit 7: confirmedTime)
+    uint8_t numSV;      ///< Number of satellites used in Nav Solution
+    int32_t lon;        ///< Longitude [1e-7 deg]
+    int32_t lat;        ///< Latitude [1e-7 deg]
+    int32_t height;     ///< Height above ellipsoid [mm]
+    int32_t hMSL;       ///< Height above mean sea level [mm]
+    uint32_t hAcc;      ///< Horizontal accuracy estimate [mm]
+    uint32_t vAcc;      ///< Vertical accuracy estimate [mm]
+    int32_t velN;       ///< North velocity component [mm/s]
+    int32_t velE;       ///< East velocity component [mm/s]
+    int32_t velD;       ///< Down velocity component [mm/s]
+    uint32_t gSpeed;    ///< Ground speed (2-D) [mm/s]
+    int32_t headMot;    ///< Heading of motion 2-D [1e-5 deg]
+    uint32_t sAcc;      ///< Speed accuracy estimate [mm/s]
+    uint32_t headAcc;   ///< Heading accuracy estimate (both motion and vehicle) [1e-5 deg]
+    uint16_t pDOP;      ///< Position DOP [0.01]
+    uint8_t reserved1[6];///< Reserved
+    int32_t headVeh;    ///< Heading of vehicle (2-D) [1e-5 deg]
+    uint8_t reserved2[4];///< Reserved
 };
+
+#pragma pack(pop)
+
+static_assert(sizeof(msg_rx_nav_pvt_s) == 92);
 
 class Ublox {
 public:
+    /**
+     * @brief   How the receiver is wired up, taken from the board header.
+     */
+    struct Config {
+        SerialDriver *port;     ///< Serial driver the receiver is on
+        uint32_t baudrate;      ///< Baudrate to run the link at
+        uint16_t meas_int_ms;   ///< Measurement interval [ms]
+        uint8_t port_id;        ///< Receiver's own port number, 1 for UART1
+    };
 
-  /*
-   * Largest UBX payload the parser will accept. UBX-NAV-PVT, the only message
-   * enabled here, is 92 bytes; the slack covers the MON-VER reply used as a
-   * link probe, whose extension strings make it the longest thing the
-   * receiver sends unsolicited-adjacent.
-   */
-  static constexpr uint16_t max_payload = 256U;
+    explicit Ublox(const Config &cfg);
 
-  /*
-   * last_error() codes. The receiver has no error register to report, so
-   * these are all synthetic and describe how far init() got.
-   */
-  static constexpr uint32_t err_none = 0U;
-  static constexpr uint32_t err_no_link = 1U;   /**< No frame at either rate.*/
-  static constexpr uint32_t err_cfg_rate = 2U;  /**< CFG-RATE not acked.     */
-  static constexpr uint32_t err_cfg_msg = 3U;   /**< CFG-MSG not acked.      */
+    /// Configure the receiver and read from it forever. Give it a thread.
+    void run();
 
-  /**
-   * @brief   How the receiver is wired up, taken from the board header.
-   */
-  struct Config {
-    SerialDriver *sd;        /**< Serial driver behind the GNSS pins.        */
-    uint32_t baud_boot;      /**< Rate the receiver powers up at.            */
-    uint32_t baud_run;       /**< Rate to switch the link to.                */
-    uint16_t nav_period_ms;  /**< Navigation solution period, milliseconds.  */
-  };
+    /// Last NAV-PVT received.
+    /**
+     * Copied out under the lock, so the caller cannot observe a half-updated
+     * message while the driver thread is writing one.
+     *
+     * @return false if no NAV-PVT has arrived yet, leaving msg untouched.
+     */
+    bool nav_pvt(msg_rx_nav_pvt_s &msg) const;
 
-  /**
-   * @brief   Link health counters.
-   * @details These exist to tell a receiver that is alive but has no sky view
-   *          from one that is not talking at all: both report fix_type_none,
-   *          and without counters the two look identical from the log. A
-   *          silently dead transport has cost this project a bring-up before,
-   *          so the driver is built to be able to prove bytes are moving.
-   */
-  struct Stats {
-    uint32_t bytes_rx;        /**< Bytes taken off the serial driver.        */
-    uint32_t frames_ok;       /**< Frames that passed the checksum.          */
-    uint32_t checksum_errors; /**< Frames whose checksum did not match.      */
-    uint32_t resyncs;         /**< Parser restarts: bad sync or long length. */
-    uint32_t naks;            /**< UBX-ACK-NAK replies to our configuration. */
-    uint32_t timeouts;        /**< poll() calls that saw no byte at all.     */
-  };
+    /// Frames received, and frames dropped for a bad sync or checksum.
+    /**
+     * A receiver with no sky view and a receiver that is not talking at all
+     * both report fixType 0, so the counters are what tells them apart.
+     */
+    uint32_t frames() const { return _frames; }
 
-  explicit Ublox(const Config &cfg);
-
-  /**
-   * @brief   Starts the link and configures the receiver.
-   * @details The bring-up order matters and is easy to get wrong:
-   *
-   *          1. Open at baud_run and poll UBX-MON-VER. A receiver still
-   *             configured from an earlier run answers here and steps 2-3
-   *             are skipped, which is the common case on a warm reset.
-   *          2. Otherwise reopen at baud_boot and send UBX-CFG-PRT setting
-   *             the new rate and UBX-only protocol masks. This frame is
-   *             deliberately *not* acknowledged: the receiver changes rate as
-   *             soon as it has parsed it, so any ACK would come back at the
-   *             new speed. Waiting for one here always fails.
-   *          3. Reopen at baud_run and confirm with MON-VER.
-   *          4. CFG-RATE for the navigation period, then CFG-MSG to enable
-   *             UBX-NAV-PVT. Both are acknowledged normally.
-   *
-   * @return  false if the link never came up or a setting was refused, see
-   *          last_error().
-   */
-  bool init(void);
-
-  /**
-   * @brief   Reads and parses whatever the receiver has sent.
-   * @param   timeout  how long to wait for the first byte.
-   * @return  true if a new navigation solution was decoded, so nav_pvt() has
-   *          fresh data.
-   */
-  bool poll(sysinterval_t timeout);
-
-  /**
-   * @brief   The most recent navigation solution.
-   * @details Returned by value, copied under a lock, so a caller in another
-   *          thread cannot observe a half-updated solution.
-   */
-  ubx_nav_pvt nav_pvt(void);
-
-  /**
-   * @brief   Link counters, see the Stats comment for why they are here.
-   * @note    Cleared by init() once the link is confirmed, so they count the
-   *          running link and not the noise from probing for it.
-   */
-  Stats stats(void) const { return stats_; }
-
-  /** @brief  True once init() has brought the link up. */
-  bool ready(void) const { return ready_; }
-
-  /** @brief  How far init() got, one of the err_* codes. */
-  uint32_t last_error(void) const { return error_; }
+    uint32_t errors() const { return _errors; }
 
 private:
+    static constexpr size_t BUFFER_SIZE = 512;
+    static constexpr size_t MAX_TX_PAYLOAD = 32;
+    static constexpr sysinterval_t RECV_TIMEOUT = TIME_MS2I(5);
+    static constexpr sysinterval_t RECV_VER_TIMEOUT = TIME_MS2I(100);
+    static constexpr sysinterval_t RECV_ACK_TIMEOUT = TIME_MS2I(200);
 
-  void open(uint32_t baud);
-  bool probe(sysinterval_t timeout);
-  msg_t get_until(systime_t deadline);
-  void send(uint8_t cls, uint8_t id, const uint8_t *payload, uint16_t len);
-  bool await(uint8_t cls, uint8_t id, sysinterval_t timeout);
-  bool ack_wait(uint8_t cls, uint8_t id, sysinterval_t timeout);
-  bool feed(uint8_t b);
-  void dispatch(void);
-  void decode_nav_pvt(void);
+#pragma pack(push, 1)
 
-  Config cfg_;
-  SerialConfig serial_cfg_ = {}; /**< Kept by reference inside sdStart().   */
-  mutex_t lock_;                /**< Guards nav_pvt_ from the reader thread.*/
-  ubx_nav_pvt nav_pvt_ = {};
-  Stats stats_ = {};
-  uint32_t error_ = err_none;
-  bool ready_ = false;
+// UBX Message Header
+    struct Message {
+        uint8_t sync1;
+        uint8_t sync2;
+        uint8_t msg_class;
+        uint8_t msg_id;
+        uint16_t length;
 
-  /*
-   * Frame parser state. A whole frame is assembled here before anything looks
-   * at it, so a truncated or corrupt one can never reach decode_nav_pvt().
-   */
-  uint8_t state_ = 0U;
-  uint8_t msg_cls_ = 0U;
-  uint8_t msg_id_ = 0U;
-  uint16_t msg_len_ = 0U;
-  uint16_t msg_pos_ = 0U;
-  uint8_t ck_a_ = 0U;
-  uint8_t ck_b_ = 0U;
-  uint8_t payload_[max_payload] = {};
+        void *payload() {
+            return reinterpret_cast<uint8_t *>(this) + sizeof(Message);
+        }
+    };
 
-  /* Set by dispatch() for the frame it has just accepted. */
-  bool have_nav_pvt_ = false;
-  uint8_t ack_cls_ = 0U;
-  uint8_t ack_id_ = 0U;
-  bool ack_ok_ = false;
-  bool ack_seen_ = false;
+// UBX Message Checksum
+    struct Checksum {
+        uint8_t ck_a;
+        uint8_t ck_b;
+    };
+#pragma pack(pop)
+
+    enum class HWVersion {
+        NONE,
+        UNKNOWN,
+        UBLOX8,
+        UBLOX9
+    };
+
+    struct HWProtocolVersion {
+        HWVersion hwVersion = HWVersion::NONE;
+        int protocol = 0;
+
+        bool found() const {
+            return hwVersion != HWVersion::NONE;
+        }
+    };
+
+    // Message Classes
+    enum class MessageClass : uint8_t {
+        NAV = 0x01,
+        ACK = 0x05,
+        CFG = 0x06,
+        MON = 0x0A
+    };
+
+    // Message IDs
+    enum class MessageID : int {
+        ANY = -1,
+        NAV_PVT = 0x07,
+
+        ACK_NAK = 0x00,
+        ACK_ACK = 0x01,
+
+        CFG_PRT = 0x00,
+        CFG_MSG = 0x01,
+        CFG_RATE = 0x08,
+        CFG_NAV5 = 0x24,
+
+        MON_VER = 0x04,
+    };
+
+    Config _cfg;
+
+    mutable mutex_t _lock;      ///< Guards _nav_pvt against the getter
+    msg_rx_nav_pvt_s _nav_pvt = {};
+    bool _got_nav_pvt = false;
+
+    HWProtocolVersion _version;
+
+    /*
+     * Receive buffer and the window of it still to be parsed. Messages are
+     * cast in place out of this, which is why the structs above are packed:
+     * a frame can start at any offset, so nothing may assume alignment.
+     */
+    uint8_t _buffer[BUFFER_SIZE] = {};
+    size_t _fill = 0;           ///< Bytes held in _buffer
+    size_t _pos = 0;            ///< Parse cursor into _buffer
+
+    bool _sync = false;
+
+    uint32_t _frames = 0;
+    uint32_t _errors = 0;
+
+    static const uint32_t _baudrates_list[8];
+
+    std::span<uint8_t> parse_buf() {
+        return {&_buffer[_pos], _fill - _pos};
+    }
+
+    void set_baudrate(uint32_t baudrate);
+
+    void flush_buffers();
+
+    HWProtocolVersion probe();
+
+    /// Read message.
+    /**
+     * Read one message from the receiver's serial port. Returns immediately
+     * if a complete message is already buffered, otherwise waits up to
+     * RECV_TIMEOUT for more data.
+     *
+     * @return true if a message was read, false if not enough data collected.
+     */
+    bool read_message(Message *&msg);
+
+    bool wait_for_message(sysinterval_t timeout, Message *&msg, MessageClass msg_class, MessageID msg_id);
+
+    bool send_message(MessageClass msg_class, MessageID msg_id, const void *payload, size_t payload_length,
+                      bool wait_ack = false);
+
+    void send_cfg_msg(MessageClass msg_class, MessageID msg_id, uint8_t rate, bool wait_ack);
+
+    void send_data(const uint8_t *data, size_t length);
+
+    void configure();
+
+    void handle_message(Message *msg);
+
+    static const char *hw_version_string(HWVersion version);
+
+    static Checksum calculate_checksum(std::span<const uint8_t> data);
 };
 
 } /* namespace pika::gnss */
-

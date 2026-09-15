@@ -74,6 +74,8 @@
 #define LINE_LCD_SDA                PAL_LINE(GPIOB, 7U)
 #define LINE_SPK_OUT                PAL_LINE(GPIOA, 4U)
 #define LINE_SPK_EN                 PAL_LINE(GPIOE, 15U)
+#define LINE_MIC_IN                 PAL_LINE(GPIOA, 6U)
+#define LINE_MIC_EN                 PAL_LINE(GPIOA, 7U)
 #define LINE_GNSS_TX                PAL_LINE(GPIOD, 5U)
 #define LINE_GNSS_RX                PAL_LINE(GPIOD, 6U)
 
@@ -106,20 +108,6 @@
  */
 #define BOARD_SPK_DAC               DACD1
 #define BOARD_SPK_TIMER             GPTD6
-
-/*
- * Level on LINE_SPK_EN that un-mutes the amplifier.
- *
- * The pin drives /SD directly, and "active low" there names the shutdown
- * function, not the enable: low shuts the amplifier down, high runs it. So
- * this is high, and the reset state of the pin - low - is the muted one.
- *
- * Getting this backwards does not fail loudly. The amplifier ends up running
- * whenever it should be muted and muted whenever it should play, which looks
- * like silence from the speaker and a class D switching waveform on its
- * output at idle.
- */
-#define BOARD_SPK_EN_ON             true
 
 /*
  * How long the output has to sit at its idle level before /SD may go high.
