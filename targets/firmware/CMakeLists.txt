@@ -11,3 +11,7 @@ pika_add_firmware(firmware
 
 # Sound effects, generated from sounds/ into the build tree at build time.
 pika_add_audio_sample(firmware.elf SOUND "${PROJECT_ROOT}/sounds/meow.mp3")
+
+# MELPe 1200 bps speech codec. Nothing calls it yet, and --gc-sections keeps
+# the unreferenced objects out of the image, so this is free until it is used.
+target_link_libraries(firmware.elf PRIVATE melpe)

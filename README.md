@@ -37,6 +37,10 @@ See `tools/hw help` for the rest, and `CLAUDE.md` for the rule.
   `cfg/chconf.h`/`cfg/halconf.h` (kernel and HAL configuration) and a
   `CMakeLists.txt` calling `pika_add_firmware(<name> BOARD <board> SOURCES ...)`.
 - `src/` — code shared between targets (on the include path).
+- `src/melpe/` — third party: the MELPe 1200 bps speech codec, vendored from
+  Rhizomatica/melpe and patched to run without a heap or stdio. Read
+  `src/melpe/PROVENANCE.md` before touching it or shipping it — the licensing
+  is not as simple as the repository's GPL-3.0 label suggests.
 - `cmake/chibios.cmake` — ChibiOS source/include lists and the
   `pika_add_firmware()` helper. Hardcoded for STM32H733 (Cortex-M7) with
   ChibiOS RT; the enabled low level drivers are listed there.
