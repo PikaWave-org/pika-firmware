@@ -78,9 +78,61 @@ struct msg_rx_nav_pvt_s {
     uint8_t reserved2[4];///< Reserved
 };
 
+/**
+ * @brief   RX MON-HW, the state of the receiver's front end.
+ * @note    The M8 layout, 60 bytes. Only the noise, AGC, antenna and jamming
+ *          fields are of interest here; the pin maps are carried because this
+ *          is the wire layout, cast in place out of the receive buffer.
+ * @note    jamInd and the jammingState bits only mean anything once the
+ *          interference monitor has been switched on with CFG-ITFM, which the
+ *          driver does not do. Until then they read 0 and "unknown".
+ */
+struct msg_rx_mon_hw_s {
+    uint32_t pinSel;    ///< Mask of pins set as peripheral/PIO
+    uint32_t pinBank;   ///< Mask of pins set as bank A/B
+    uint32_t pinDir;    ///< Mask of pins set as input/output
+    uint32_t pinVal;    ///< Mask of pins value low/high
+    uint16_t noisePerMS;///< Noise level as measured by the GPS core
+    uint16_t agcCnt;    ///< AGC monitor, range 0..8191
+    uint8_t aStatus;    ///< Antenna supervisor state (0: INIT, 1: DONTKNOW, 2: OK, 3: SHORT, 4: OPEN)
+    uint8_t aPower;     ///< Antenna power status (0: off, 1: on, 2: don't know)
+    uint8_t flags;      ///< Flags (bit 0: rtcCalib, bit 1: safeBoot, bits 2..3: jammingState, bit 4: xtalAbsent)
+    uint8_t reserved1;  ///< Reserved
+    uint32_t usedMask;  ///< Mask of pins that are used by the virtual pin manager
+    uint8_t VP[17];     ///< Array of pin mappings for each of the 17 physical pins
+    uint8_t jamInd;     ///< CW jamming indicator, range 0 (none) .. 255 (strong)
+    uint8_t reserved2[2];///< Reserved
+    uint32_t pinIrq;    ///< Mask of pins value using the PIO Irq
+    uint32_t pullH;     ///< Mask of pins value using the PIO pull high resistor
+    uint32_t pullL;     ///< Mask of pins value using the PIO pull low resistor
+};
+
 #pragma pack(pop)
 
 static_assert(sizeof(msg_rx_nav_pvt_s) == 92);
+static_assert(sizeof(msg_rx_mon_hw_s) == 60);
+
+/// Antenna supervisor states, the values of msg_rx_mon_hw_s::aStatus.
+enum class AntennaStatus : uint8_t {
+    INIT = 0,
+    DONTKNOW = 1,
+    OK = 2,
+    SHORT = 3,
+    OPEN = 4
+};
+
+/// Jamming/interference monitor states, bits 2..3 of msg_rx_mon_hw_s::flags.
+enum class JammingState : uint8_t {
+    UNKNOWN = 0,    ///< Monitor disabled - what this driver leaves it at
+    OK = 1,         ///< No significant jamming
+    WARNING = 2,    ///< Interference visible, fix still held
+    CRITICAL = 3    ///< Interference visible, no fix
+};
+
+/// Pulls the jammingState field out of msg_rx_mon_hw_s::flags.
+inline JammingState jamming_state(const msg_rx_mon_hw_s &msg) {
+    return static_cast<JammingState>((msg.flags >> 2) & 0x03U);
+}
 
 class Ublox {
 public:
@@ -104,9 +156,32 @@ public:
      * Copied out under the lock, so the caller cannot observe a half-updated
      * message while the driver thread is writing one.
      *
-     * @return false if no NAV-PVT has arrived yet, leaving msg untouched.
+     * These accessors hand back the last message that arrived, however long
+     * ago that was, so on their own they cannot distinguish live data from a
+     * receiver that stopped talking an hour ago. Ask for age_ms and report it
+     * anywhere the values are shown: a stale solution is made of entirely
+     * plausible numbers, so nothing about the values themselves betrays that
+     * the link behind them is dead.
+     *
+     * age_ms is read under the same lock as the message, so it always belongs
+     * to the copy returned and cannot be raced against it.
+     *
+     * @param   age_ms  if not null, milliseconds since this message arrived.
+     * @return false if no NAV-PVT has arrived yet, leaving both untouched.
      */
-    bool nav_pvt(msg_rx_nav_pvt_s &msg) const;
+    bool nav_pvt(msg_rx_nav_pvt_s &msg, uint32_t *age_ms = nullptr) const;
+
+    /// Last MON-HW received: noise, AGC, antenna and jamming state.
+    /**
+     * Copied out under the same lock as nav_pvt(), for the same reason, and
+     * goes stale the same way - more dangerously, in fact, because MON-HW
+     * carries no equivalent of NAV-PVT's iTOW to make a frozen message
+     * obvious. Report age_ms with it.
+     *
+     * @param   age_ms  if not null, milliseconds since this message arrived.
+     * @return false if no MON-HW has arrived yet, leaving both untouched.
+     */
+    bool mon_hw(msg_rx_mon_hw_s &msg, uint32_t *age_ms = nullptr) const;
 
     /// Frames received, and frames dropped for a bad sync or checksum.
     /**
@@ -184,13 +259,20 @@ private:
         CFG_NAV5 = 0x24,
 
         MON_VER = 0x04,
+        MON_HW = 0x09,
     };
 
     Config _cfg;
 
-    mutable mutex_t _lock;      ///< Guards _nav_pvt against the getter
+    /* The arrival times are guarded with their messages, so a caller always
+       gets an age that belongs to the copy it was handed. */
+    mutable mutex_t _lock;      ///< Guards _nav_pvt and _mon_hw against the getters
     msg_rx_nav_pvt_s _nav_pvt = {};
+    systime_t _nav_pvt_time = 0;
     bool _got_nav_pvt = false;
+    msg_rx_mon_hw_s _mon_hw = {};
+    systime_t _mon_hw_time = 0;
+    bool _got_mon_hw = false;
 
     HWProtocolVersion _version;
 

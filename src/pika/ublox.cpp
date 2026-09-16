@@ -109,12 +109,33 @@ void Ublox::run() {
   }
 }
 
-bool Ublox::nav_pvt(msg_rx_nav_pvt_s &msg) const {
+bool Ublox::nav_pvt(msg_rx_nav_pvt_s &msg, uint32_t *age_ms) const {
   chMtxLock(&_lock);
   bool got = _got_nav_pvt;
 
   if (got) {
     msg = _nav_pvt;
+
+    if (age_ms != nullptr) {
+      *age_ms = (uint32_t)TIME_I2MS(chVTTimeElapsedSinceX(_nav_pvt_time));
+    }
+  }
+
+  chMtxUnlock(&_lock);
+
+  return got;
+}
+
+bool Ublox::mon_hw(msg_rx_mon_hw_s &msg, uint32_t *age_ms) const {
+  chMtxLock(&_lock);
+  bool got = _got_mon_hw;
+
+  if (got) {
+    msg = _mon_hw;
+
+    if (age_ms != nullptr) {
+      *age_ms = (uint32_t)TIME_I2MS(chVTTimeElapsedSinceX(_mon_hw_time));
+    }
   }
 
   chMtxUnlock(&_lock);
@@ -432,6 +453,14 @@ void Ublox::configure() {
 
     send_cfg_msg(MessageClass::NAV, MessageID::NAV_PVT, 1, true);
 
+    /*
+     * Front-end health, at the same rate as the solution: the rate is in
+     * navigation epochs, so 1 here is one MON-HW per NAV-PVT. Cheap at 60
+     * bytes, and it is the only way to tell a receiver with no sky view from
+     * one whose antenna is open or being jammed.
+     */
+    send_cfg_msg(MessageClass::MON, MessageID::MON_HW, 1, true);
+
     LOG("gnss: configuration done");
   }
 }
@@ -457,7 +486,36 @@ void Ublox::handle_message(Message *msg) {
 
       chMtxLock(&_lock);
       _nav_pvt = *ubx_pvt;
+      _nav_pvt_time = chVTGetSystemTimeX();
       _got_nav_pvt = true;
+      chMtxUnlock(&_lock);
+
+      break;
+    }
+
+    default:
+      handled = false;
+      break;
+    }
+
+    break;
+  }
+
+  case MessageClass::MON: {
+    switch (msg_id) {
+    case MessageID::MON_HW: {
+      if (msg->length < sizeof(msg_rx_mon_hw_s)) {
+        // Not the M8 layout, fields would land elsewhere
+        _errors++;
+        break;
+      }
+
+      msg_rx_mon_hw_s *ubx_hw = reinterpret_cast<msg_rx_mon_hw_s *>(payload);
+
+      chMtxLock(&_lock);
+      _mon_hw = *ubx_hw;
+      _mon_hw_time = chVTGetSystemTimeX();
+      _got_mon_hw = true;
       chMtxUnlock(&_lock);
 
       break;
