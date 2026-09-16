@@ -56,8 +56,14 @@ static void stm32_gpio_init(void) {
     palSetLineMode(LINE_SPK_EN, PAL_MODE_OUTPUT_PUSHPULL);
     palSetLineMode(LINE_SPK_OUT, PAL_MODE_INPUT_ANALOG);
 
-    palSetLine(LINE_MIC_EN);
-    palSetLineMode(LINE_MIC_EN, PAL_MODE_OUTPUT_PUSHPULL);
+    /* Microphone: MIC_IN is ADC1_INP3 and stays analog, MIC_SHDN is the
+     preamp's shutdown input and is active high - the reverse of SPK_EN above.
+     Set it before the pin becomes an output, for the same reason the speaker
+     clears its line first: a low glitch here powers the microphone up while
+     nothing is ready to read it.*/
+    palSetLine(LINE_MIC_SHDN);
+    palSetLineMode(LINE_MIC_SHDN, PAL_MODE_OUTPUT_PUSHPULL);
+    palSetLineMode(LINE_MIC_IN, PAL_MODE_INPUT_ANALOG);
 
     /* GNSS receiver on USART2, AF7. The pull-up on RX keeps the line idle high
      while the module is still booting, so the USART sees no framing errors.*/

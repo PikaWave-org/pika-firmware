@@ -4,14 +4,15 @@
  * The wiring comes in as a Config, filled from the board's BOARD_SPK_* and
  * LINE_SPK_* definitions, so the driver depends on no board header.
  *
- * Samples go out at a fixed rate: the timer's TRGO paces the DAC, and DMA
- * feeds it from a two-half circular buffer that the transfer callback
+ * Samples go out at a fixed rate: the SampleClock's TRGO paces the DAC, and
+ * DMA feeds it from a two-half circular buffer that the transfer callback
  * refills from an AudioSource a half at a time.
  *
  * Usage:
  *
+ *   static pika::audio::SampleClock sample_clock{&BOARD_SAMPLE_TIMER};
  *   static const pika::audio::DACSpeaker::Config spk_cfg = {
- *     &BOARD_SPK_DAC, &BOARD_SPK_TIMER,
+ *     &BOARD_SPK_DAC, &sample_clock,
  *     LINE_SPK_EN, BOARD_SPK_SETTLE_MS
  *   };
  *   static pika::audio::DACSpeaker spk{spk_cfg};
@@ -28,6 +29,7 @@
 
 #pragma once
 
+#include "SampleClock.h"
 #include "audio_io.h"
 
 #include "hal.h"
@@ -58,10 +60,10 @@ public:
      * @brief   How the speaker is wired up, taken from the board header.
      */
     struct Config {
-        DACDriver *dac{};     /**< DAC channel driving the amplifier input.       */
-        GPTDriver *tim{};     /**< Timer whose TRGO paces the DAC.                */
-        ioline_t enable{};    /**< Amplifier enable pin.                        */
-        uint32_t settle_ms{}; /**< Output settling before un-muting.    */
+        DACDriver *dac{};     /**< DAC channel driving the amplifier input.      */
+        SampleClock *clock{}; /**< Sample clock, shared with the microphone.     */
+        ioline_t enable{};    /**< Amplifier enable pin.                         */
+        uint32_t settle_ms{}; /**< Output settling before un-muting.             */
     };
 
     explicit DACSpeaker(const Config &cfg) { cfg_ = cfg; }
@@ -92,7 +94,7 @@ public:
     /** @brief  Clears the error flags and, if the DMA died, re-arms it. */
     bool recover();
 
-    [[nodiscard]] uint32_t sample_rate() const override { return SAMPLE_RATE; }
+    [[nodiscard]] uint32_t sample_rate() const override { return SampleClock::rate; }
 
     /**
      * @brief   Playback volume, 0 to 1.0, clamped into range.
@@ -111,30 +113,16 @@ private:
     /* The DMA transfer and error callbacks, and the conversion group holding
      them. The group is a member so that its initializer may name them while
      they stay private.*/
-    static constexpr uint32_t SAMPLE_RATE = 32000;
-
     static constexpr sysinterval_t AMP_ON_DELAY = TIME_MS2I(20U);
 
     static constexpr int DAC_BIT_DEPTH = 12;
     static constexpr uint16_t DAC_VALUE_MID = 1 << (DAC_BIT_DEPTH - 1);
     static constexpr uint16_t DAC_VALUE_MAX = (1 << DAC_BIT_DEPTH) - 1;
 
-    static constexpr uint32_t TIM_FREQUENCY = 4000000U;
-    static constexpr uint32_t TIM_INTERVAL = TIM_FREQUENCY / SAMPLE_RATE;
-    static_assert(TIM_FREQUENCY % SAMPLE_RATE == 0U, "sample rate must divide the timer frequency exactly");
-    static_assert(TIM_INTERVAL > 1U, "interval 0 and 1 produce no update events");
-    static_assert(STM32_TIMCLK1 % TIM_FREQUENCY == 0U, "timer prescaler must be exact, or the sample rate drifts");
-    static_assert((STM32_TIMCLK1 / TIM_FREQUENCY) - 1U <= 0xFFFFU, "prescaler does not fit the 16 bit register");
-
     /* TSEL value selecting TIM6's TRGO as the DAC trigger; the low level
-       driver shifts it into TSEL1 itself. */
+       driver shifts it into TSEL1 itself. The SampleClock owns the timer, but
+       which trigger the DAC listens for is the DAC's own wiring. */
     static constexpr uint32_t TRG_TIM6_TRGO = 5U;
-
-    const GPTConfig tim_cfg = {//
-                               .frequency = TIM_FREQUENCY,
-                               .callback = nullptr,
-                               .cr2 = TIM_CR2_MMS_1,
-                               .dier = 0U};
 
     /*
      * MODE1 = 000: normal mode, output buffer on, external pin only. The

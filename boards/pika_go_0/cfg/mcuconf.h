@@ -247,6 +247,15 @@
 #define STM32_ADC_ADC12_CLOCK_MODE          ADC_CCR_CKMODE_ADCCK
 
 /*
+ * This part has no ADC3, and STM32_ADC_USE_ADC3 stays at its default of FALSE.
+ * The setting is still needed: the low level driver works out STM32_ADC3_CLOCK
+ * and range checks it whether or not the converter exists, and its default of
+ * AHB/4 comes to 65MHz here, over the 50MHz maximum. Pointing it at the same
+ * source as ADC12 makes the check pass on a number that nothing ever uses.
+ */
+#define STM32_ADC_ADC3_CLOCK_MODE           ADC_CCR_CKMODE_ADCCK
+
+/*
  * CAN driver system settings.
  */
 #define STM32_CAN_USE_FDCAN1                FALSE

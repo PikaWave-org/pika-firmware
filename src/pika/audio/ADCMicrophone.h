@@ -1,0 +1,186 @@
+/*
+ * Driver for the microphone: an analog preamp into ADC1, read by DMA.
+ *
+ * The capture-side mirror of DACSpeaker, and shaped like it. The wiring comes
+ * in as a Config filled from the board's BOARD_MIC_* and LINE_MIC_* defines,
+ * so the driver depends on no board header.
+ *
+ * Samples come in at a fixed rate: the SampleClock's TRGO paces the ADC, and
+ * DMA fills a two-half circular buffer whose transfer callback hands each
+ * finished half to an AudioConsumer. The direction is the only real difference
+ * from the speaker - there the callback asks a source to fill the buffer, here
+ * it gives a full one away.
+ *
+ * Usage:
+ *
+ *   static pika::audio::SampleClock sample_clock{&BOARD_SAMPLE_TIMER};
+ *   static const pika::audio::ADCMicrophone::Config mic_cfg = {
+ *     &BOARD_MIC_ADC, &sample_clock, LINE_MIC_SHDN,
+ *     BOARD_MIC_ADC_CHANNEL, BOARD_MIC_SETTLE_MS
+ *   };
+ *   static pika::audio::ADCMicrophone mic{mic_cfg};
+ *   ...
+ *   mic.init();
+ *   mic.start_capture(recorder);
+ *   ...
+ *   mic.stop_capture();
+ *
+ * @note  The sample buffer is shared between all instances, because where it
+ *        sits in memory is the driver's business and not a caller's. One
+ *        instance is therefore the supported case - see the .cpp.
+ */
+
+#pragma once
+
+#include "SampleClock.h"
+#include "audio_io.h"
+
+#include "hal.h"
+
+#include <cstdint>
+#include <span>
+
+namespace pika::audio {
+
+/* Samples per buffer half, i.e. 8ms of audio and a 125Hz drain callback. The
+   same figure as the speaker's, so a recording and a playback move in blocks
+   of the same size. */
+constexpr unsigned mic_buffer_half_len = 256U;
+
+/**
+ * @brief   Error flags reported by last_error().
+ */
+enum : uint32_t {
+    err_mic_dma = 1U << 0,     /**< DMA transfer error, the stream was freed.  */
+    err_mic_overrun = 1U << 1, /**< A conversion landed before the last was
+                                    read; the sample is lost.                  */
+    err_mic_awd = 1U << 2      /**< Analog watchdog, not armed by this driver. */
+};
+
+class ADCMicrophone {
+public:
+    /**
+     * @brief   How the microphone is wired up, taken from the board header.
+     */
+    struct Config {
+        ADCDriver *adc{};     /**< Converter reading the preamp output.         */
+        SampleClock *clock{}; /**< Sample clock, shared with the speaker.       */
+        ioline_t shutdown{};  /**< Preamp shutdown pin, active high.            */
+        uint32_t channel{};   /**< ADC input the preamp is wired to.            */
+        uint32_t settle_ms{}; /**< Bias settling after the preamp wakes up.     */
+    };
+
+    explicit ADCMicrophone(const Config &cfg) { cfg_ = cfg; }
+
+    /**
+     * @brief   Starts the ADC and builds the conversion group.
+     * @details Leaves the preamp shut down and the clock stopped. Nothing is
+     *          converted until start_capture().
+     * @return  false if the ADC or the sample clock could not be started.
+     */
+    bool init();
+
+    /**
+     * @brief   Powers the preamp up and begins capturing into @p dst.
+     * @details Blocks for settle_ms while the preamp's output reaches its bias
+     *          point, then runs until stop_capture(). @p dst is called from
+     *          the DMA interrupt every 8ms.
+     * @return  false if init() has not succeeded, capture is already running,
+     *          or the speaker holds the sample clock.
+     */
+    bool start_capture(AudioConsumer &dst);
+
+    /** @brief  Stops the converter and shuts the preamp down again. */
+    void stop_capture();
+
+    /** @brief  True between a successful start_capture() and stop_capture(). */
+    [[nodiscard]] bool capturing() const { return consumer_ != nullptr; }
+
+    /** @brief  Error flags since the last init(), 0 if none. */
+    [[nodiscard]] uint32_t last_error() const { return error_flags_; }
+
+    /**
+     * @brief   The converter's current estimate of the input's DC level, in
+     *          raw ADC codes.
+     * @details Useful for bring-up: a value near mid scale says the preamp is
+     *          powered and biased, and one pinned at an end says the channel
+     *          is wrong or the pin is floating.
+     */
+    [[nodiscard]] uint32_t dc_level() const { return dc_ >> dc_shift; }
+
+    [[nodiscard]] uint32_t sample_rate() const { return SampleClock::rate; }
+
+private:
+    static ADCMicrophone *instance_;
+
+    static constexpr int ADC_BIT_DEPTH = 12;
+    static constexpr uint32_t ADC_VALUE_MID = 1U << (ADC_BIT_DEPTH - 1);
+
+    /* 12 bit codes to signed 16 bit full scale is a shift of four. */
+    static constexpr int ADC_TO_FULL_SCALE = 16 - ADC_BIT_DEPTH;
+
+    /*
+     * EXTSEL value selecting TIM6's TRGO as the ADC trigger. Not the same
+     * number the DAC uses for the same timer - the two converters have
+     * separate trigger tables - and RM0468 is the only place either appears.
+     */
+    static constexpr uint32_t TRG_TIM6_TRGO = 13U;
+
+    /*
+     * Sampling time. At the 20MHz ADC clock 64.5 + 7.5 cycles is 3.6us against
+     * a 31.25us sample period, so the long setting costs nothing and leaves
+     * the sample-and-hold ample time to track the preamp through whatever
+     * series resistance is on the pin.
+     */
+    static constexpr uint32_t SMP_TIME = ADC_SMPR_SMP_64P5;
+
+    /*
+     * The DC tracker, as a one-pole IIR in fixed point: dc_ holds the estimate
+     * shifted up by dc_shift, and each sample moves it a 2^-dc_rate fraction
+     * of the way. At 32kHz a rate of 10 gives a corner near 5Hz, well below
+     * anything audible, so it removes the bias without touching the signal.
+     *
+     * The bias is tracked rather than assumed to be mid scale because the
+     * preamp's operating point is set by its own resistors, not by the
+     * converter's reference, and a fixed offset would eat headroom on one side.
+     */
+    static constexpr int dc_shift = 12;
+    static constexpr int dc_rate = 10;
+
+    static void fill_cb(ADCDriver *adcp);
+    static void error_cb(ADCDriver *adcp, adcerror_t err);
+
+    void preamp(bool on);
+
+    /* I-class twin of stop_capture(), for use from the DMA callback. */
+    void stop_capture_i();
+
+    /* Rewrites raw codes in place as signed full scale samples, tracking the
+       DC level as it goes. Returns the block as the consumer sees it. */
+    std::span<const int16_t> convert(std::span<adcsample_t> buf);
+
+    Config cfg_{};
+
+    /*
+     * Filled in init() rather than being a constant initializer like the
+     * speaker's, because which input the preamp is wired to arrives in the
+     * Config and decides three of the fields below.
+     */
+    ADCConversionGroup adc_grp_{};
+
+    ADCConfig adc_cfg_{};
+
+    /* The consumer doubles as the driver's state: non-null exactly while the
+       converter and clock run, which is what capturing() reports. Written from
+       the DMA callback as well as the starting thread, hence volatile. */
+    AudioConsumer *volatile consumer_ = nullptr;
+
+    /* The DC estimate, shifted up by dc_shift. Read by dc_level() from a
+       thread while the callback updates it. */
+    volatile uint32_t dc_ = ADC_VALUE_MID << dc_shift;
+
+    volatile uint32_t error_flags_ = 0U; /**< Also set from the callback.  */
+    bool ready_ = false;                 /**< init() succeeded.            */
+};
+
+}// namespace pika::audio

@@ -4,7 +4,9 @@ pika_add_firmware(firmware
                 main.cpp
                 ${SRC_ROOT}/pika/log.cpp
                 ${SRC_ROOT}/pika/buttons.cpp
+                ${SRC_ROOT}/pika/audio/ADCMicrophone.cpp
                 ${SRC_ROOT}/pika/audio/DACSpeaker.cpp
+                ${SRC_ROOT}/pika/audio/SampleClock.cpp
                 ${SRC_ROOT}/pika/lcd/ST75160.cpp
                 ${SRC_ROOT}/pika/ui.cpp
                 ${SRC_ROOT}/pika/ublox.cpp)

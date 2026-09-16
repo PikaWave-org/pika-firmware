@@ -3,6 +3,9 @@
 
 #include "chprintf.h"
 
+#include <cmath>
+
+#include <pika/audio/ADCMicrophone.h>
 #include <pika/audio/DACSpeaker.h>
 #include <pika/audio/PCMPlayer.h>
 #include <pika/audio/sounds/meow.h>
@@ -19,12 +22,98 @@ static const pika::lcd::ST75160::Config lcd_cfg = {&BOARD_LCD_I2C,       BOARD_L
 
 static pika::lcd::ST75160 lcd{lcd_cfg};
 
+/*
+ * The 32kHz sample clock, shared by the speaker and the microphone. They never
+ * run together - the device either talks or listens - and the clock is what
+ * makes that exclusive rather than merely intended.
+ */
+static pika::audio::SampleClock sample_clock{&BOARD_SAMPLE_TIMER};
+
 /* The speaker, likewise. */
-static const pika::audio::DACSpeaker::Config spk_cfg = {&BOARD_SPK_DAC, &BOARD_SPK_TIMER, LINE_SPK_EN,
+static const pika::audio::DACSpeaker::Config spk_cfg = {&BOARD_SPK_DAC, &sample_clock, LINE_SPK_EN,
                                                         BOARD_SPK_SETTLE_MS};
 
 static pika::audio::DACSpeaker spk{spk_cfg};
 static pika::audio::PCMPlayer pcm_player;
+
+/* The microphone, on the same clock. */
+static const pika::audio::ADCMicrophone::Config mic_cfg = {&BOARD_MIC_ADC, &sample_clock, LINE_MIC_SHDN,
+                                                           BOARD_MIC_ADC_CHANNEL, BOARD_MIC_SETTLE_MS};
+
+static pika::audio::ADCMicrophone mic{mic_cfg};
+
+/*
+ * Bring-up instrumentation for the microphone, and nothing more: it measures
+ * each 8ms block and throws it away.
+ *
+ * The counters are deliberately non-static globals so that they can be read
+ * out of RAM over SWD by name. That is not a stylistic choice - the panel's
+ * flush wedges the heartbeat thread a few seconds after boot, so anything
+ * logged after that is never seen, and a debugger is the only way to watch
+ * this run for longer than the debug UART survives.
+ */
+uint32_t mic_blocks;   /* 8ms blocks captured, ~125 a second while running. */
+uint32_t mic_dc;       /* The driver's DC estimate, in raw ADC codes.       */
+uint32_t mic_peak;     /* Largest magnitude in the last block.              */
+uint32_t mic_rms;      /* RMS of the last block.                            */
+uint32_t mic_peak_max; /* Largest magnitude since the capture started.      */
+
+class MicLevel : public pika::audio::AudioConsumer {
+public:
+    /* Runs in the DMA interrupt: arithmetic only, no logging and no blocking.
+       The sum needs 64 bits - 256 squares of up to 32768 overflow 32. */
+    void take_audio_buffer(std::span<const int16_t> buf) override {
+
+        uint32_t peak = 0;
+        uint64_t sum = 0;
+
+        for (int16_t s: buf) {
+            const uint32_t mag = (uint32_t) (s < 0 ? -(int32_t) s : (int32_t) s);
+
+            if (mag > peak) { peak = mag; }
+            sum += (uint64_t) mag * mag;
+        }
+
+        mic_peak = peak;
+        mic_rms = buf.empty() ? 0U : (uint32_t) sqrtf((float) (sum / buf.size()));
+
+        if (peak > mic_peak_max) { mic_peak_max = peak; }
+
+        mic_dc = mic.dc_level();
+        mic_blocks++;
+    }
+};
+
+static MicLevel mic_level;
+
+/*
+ * A short listen at boot, to show that the capture path runs at all.
+ *
+ * It happens before any thread is created, and deliberately so: the panel's
+ * flush wedges the heartbeat a few seconds in, taking the debug log with it,
+ * and this is the last point at which a result can still be printed. It also
+ * ends by releasing the sample clock, so the speaker is free afterwards.
+ *
+ * What the numbers mean: blocks at 125 a second says the trigger reaches the
+ * converter, dc near mid scale says the channel is the biased preamp and not
+ * a floating pin, and peak above the noise floor says the preamp is listening.
+ */
+static constexpr uint32_t mic_probe_ms = 2000U;
+
+static void mic_probe() {
+
+    if (!mic.start_capture(mic_level)) {
+        LOG("mic: probe rejected");
+        return;
+    }
+
+    chThdSleepMilliseconds(mic_probe_ms);
+    mic.stop_capture();
+
+    LOG("mic: %u blocks in %ums (expected %u), dc %u, peak %u, rms %u, error 0x%08x", (unsigned) mic_blocks,
+        (unsigned) mic_probe_ms, (unsigned) (mic_probe_ms * pika::audio::SampleClock::rate / 1000U / 256U),
+        (unsigned) mic_dc, (unsigned) mic_peak_max, (unsigned) mic_rms, (unsigned) mic.last_error());
+}
 
 /* BTN_PWR is the polled one: it shares EXTI channel 10 with BTN_UP and the
    channel serves one port at a time, see board.h. */
@@ -285,7 +374,6 @@ int main() {
     LOG("\r\n" BOARD_NAME " starting");
 
     lcd.backlight(true);
-    palClearLine(LINE_MIC_EN);
 
     bool ok = lcd.init();
     LOG("lcd: init %s, i2c error 0x%08x", ok ? "ok" : "failed", (unsigned) lcd.last_error());
@@ -302,6 +390,11 @@ int main() {
      nothing, which otherwise looks working until you put an ear to it. */
     bool spk_ok = spk.init();
     LOG("spk: init %s", spk_ok ? "ok" : "failed");
+
+    bool mic_ok = mic.init();
+    LOG("mic: init %s", mic_ok ? "ok" : "failed");
+
+    if (mic_ok) { mic_probe(); }
 
     chThdCreateStatic(waHeartbeat, sizeof(waHeartbeat), NORMALPRIO, heartbeat, nullptr);
 

@@ -48,7 +48,19 @@ bool DACSpeaker::start_stream(AudioSource &src) {
     amp(true);
     chThdSleepMilliseconds(AMP_ON_DELAY);
 
-    gptStartContinuous(cfg_.tim, TIM_INTERVAL);
+    /*
+     * The clock goes last, as the amplifier has to be ready before the first
+     * sample rather than 20ms into the clip. If the microphone holds it the
+     * claim fails here, after the amplifier came up - which is silent anyway,
+     * since the converter is still sitting at its idle level.
+     */
+    if (!cfg_.clock->start(this)) {
+        LOG("error: sample clock is busy");
+        amp(false);
+        dacStopConversion(cfg_.dac);
+        source_ = nullptr;
+        return false;
+    }
 
     return true;
 }
@@ -75,7 +87,7 @@ bool DACSpeaker::init() {
         return false;
     }
 
-    if (gptStart(cfg_.tim, &tim_cfg) != HAL_RET_SUCCESS) {
+    if (!cfg_.clock->init()) {
         dacStop(cfg_.dac);
         return false;
     }
@@ -108,7 +120,7 @@ void DACSpeaker::stop_stream() {
  * sets around the callback, which the I-class version accepts.
  */
 void DACSpeaker::stop_stream_i() {
-    gptStopTimerI(cfg_.tim);
+    cfg_.clock->stop_i(this);
     dacStopConversionI(cfg_.dac);
     dacPutChannelX(cfg_.dac, 0U, DAC_VALUE_MID);
 
@@ -188,7 +200,7 @@ void DACSpeaker::error_cb(DACDriver *dacp, dacerror_t err) {
      * serial queue; recover() reads the flag instead.
      */
     osalSysLockFromISR();
-    gptStopTimerI(instance_->cfg_.tim);
+    instance_->cfg_.clock->stop_i(instance_);
     osalSysUnlockFromISR();
 
     instance_->error_flags_ |= err_dma;

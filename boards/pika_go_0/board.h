@@ -75,7 +75,7 @@
 #define LINE_SPK_OUT                PAL_LINE(GPIOA, 4U)
 #define LINE_SPK_EN                 PAL_LINE(GPIOE, 15U)
 #define LINE_MIC_IN                 PAL_LINE(GPIOA, 6U)
-#define LINE_MIC_EN                 PAL_LINE(GPIOA, 7U)
+#define LINE_MIC_SHDN               PAL_LINE(GPIOA, 7U)
 #define LINE_GNSS_TX                PAL_LINE(GPIOD, 5U)
 #define LINE_GNSS_RX                PAL_LINE(GPIOD, 6U)
 #define LINE_BTN_PWR                PAL_LINE(GPIOE, 10U)
@@ -114,7 +114,6 @@
  * asks for sound.
  */
 #define BOARD_SPK_DAC               DACD1
-#define BOARD_SPK_TIMER             GPTD6
 
 /*
  * How long the output has to sit at its idle level before /SD may go high.
@@ -123,6 +122,36 @@
  * charging ramp into the amplifier, which is an audible pop.
  */
 #define BOARD_SPK_SETTLE_MS         50U
+
+/*
+ * The sample clock: one timer's TRGO paces both converters at 32kHz, the DAC
+ * on the way out and the ADC on the way in.
+ *
+ * It is one timer and not two because the speaker and the microphone never run
+ * at the same time on this device - it either talks or listens. pika/audio's
+ * SampleClock wraps this and enforces that: whichever converter claims the
+ * clock holds it until it stops, and the other one is refused.
+ */
+#define BOARD_SAMPLE_TIMER          GPTD6
+
+/*
+ * Microphone: an analog preamp into ADC1.
+ *
+ * LINE_MIC_IN is ADC1_INP3, so the pin stays analog and the converter reads it
+ * directly. LINE_MIC_SHDN is the preamp's shutdown input and is active *high* -
+ * the pin is driven low to make the microphone run, which is the opposite of
+ * LINE_SPK_EN above. It comes up high so the preamp stays off until the driver
+ * asks to listen.
+ */
+#define BOARD_MIC_ADC               ADCD1
+#define BOARD_MIC_ADC_CHANNEL       ADC_CHANNEL_IN3
+
+/*
+ * How long to wait after the preamp wakes up before its samples mean anything.
+ * The output has to charge its coupling capacitor up to the bias point, and
+ * converting through that ramp just feeds the DC tracker a sweep.
+ */
+#define BOARD_MIC_SETTLE_MS         20U
 
 /*
  * u-blox CAM-M8Q-0 GNSS receiver on USART2.
