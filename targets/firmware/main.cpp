@@ -86,6 +86,13 @@ static THD_FUNCTION(heartbeat, arg) {
            pending for the next tick. */
         const bool ui_moved = ui.take_dirty();
 
+        /* Vop is an I2C command sharing the sequencing buffer with flush(),
+           so the UI only records it and it is sent from here. */
+        uint16_t vop;
+        if (ui.take_contrast(vop) && !lcd.contrast(vop)) {
+            LOG("lcd: contrast failed, i2c error 0x%08x", (unsigned) lcd.last_error());
+        }
+
         if (beat_due) {
             LOG("heartbeat %u", (unsigned) beat);
 

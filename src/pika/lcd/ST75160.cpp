@@ -389,6 +389,25 @@ bool ST75160::flush() {
   return xfer(frame_tx, sizeof frame_tx, TIME_MS2I(500));
 }
 
+/*
+ * Vop is split 6 bits then 3 across the two parameters, which is why the
+ * datasheet's 0x08, 0x03 means 200 and therefore 11.6V. Command set 1 has to
+ * be selected first: 0x81 lives there and init_script leaves the panel in
+ * set 2.
+ */
+bool ST75160::contrast(uint16_t vop) {
+  if (!ready_) {
+    return false;
+  }
+
+  const uint8_t script[] = {
+    CMD(0x30),
+    CMD(0x81), PAR(vop & 0x3FU), PAR((vop >> 6) & 0x07U)
+  };
+
+  return run_co1(script, sizeof script);
+}
+
 void ST75160::backlight(bool on) {
   if (on) {
     palSetLine(cfg_.bklt);

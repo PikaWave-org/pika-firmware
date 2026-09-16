@@ -87,6 +87,15 @@ public:
   /** @brief  Sends the framebuffer to the panel. */
   bool flush();
 
+  /**
+   * @brief   Sets the contrast, as the Vop word the datasheet defines.
+   * @note    V0 = 3.6 + vop * 0.04 volts; init() programs 200, so 11.6V.
+   * @note    One I2C transaction, sharing the sequencing buffer with
+   *          flush(), so call it only from the thread that owns the panel.
+   * @return  false if the transaction failed, see last_error().
+   */
+  bool contrast(uint16_t vop);
+
   /** @brief  Switches the backlight. */
   void backlight(bool on);
 

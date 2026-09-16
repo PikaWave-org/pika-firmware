@@ -19,7 +19,7 @@ constexpr int bar_inset = 2;
 constexpr int label_x = 16;
 constexpr int value_x = label_x + 8 * 11;
 
-enum class ItemId : uint8_t { backlight, test_sound, back };
+enum class ItemId : uint8_t { backlight, contrast, test_sound, back };
 
 struct Item {
     const char *label;
@@ -29,6 +29,7 @@ struct Item {
 /* The menu. A new entry is a row here and a case in activate(). */
 constexpr Item menu[] = {
         {"Backlight", ItemId::backlight},
+        {"Contrast", ItemId::contrast},
         {"Test sound", ItemId::test_sound},
         {"Back", ItemId::back},
 };
@@ -39,7 +40,8 @@ constexpr size_t menu_count = sizeof menu / sizeof menu[0];
 
 Ui::Ui(const Config &cfg)
         : cfg_(cfg), buttons_(cfg.buttons), dirty_(true), volume_step_(volume_initial),
-          screen_(Screen::home), cursor_(0U), backlight_(true) {}
+          screen_(Screen::home), cursor_(0U), backlight_(true), contrast_step_(contrast_initial),
+          contrast_pending_(false), editing_(false) {}
 
 void Ui::init() {
     buttons_.init();
@@ -104,12 +106,52 @@ void Ui::adjust_volume(int delta) {
     dirty_ = true;
 }
 
+uint16_t Ui::contrast_vop(uint8_t step) { return contrast_vop_min + (uint16_t) step * contrast_vop_step; }
+
+/* V0 = 3.6 + vop * 0.04 volts, in tenths because chprintf() has no %f. Every
+   Vop here is a multiple of 10, so the division is exact. */
+unsigned Ui::contrast_tenths() const { return 36U + (unsigned) contrast_vop(contrast_step_) * 4U / 10U; }
+
+/*
+ * Only records the change. Sending it is an I2C transaction that shares the
+ * sequencing buffer with flush(), so it belongs to the thread that owns the
+ * panel and reaches it through take_contrast().
+ */
+void Ui::adjust_contrast(int delta) {
+    int step = (int) contrast_step_ + delta;
+
+    if (step < 0) { step = 0; }
+    if (step > contrast_steps) { step = contrast_steps; }
+
+    if (step == (int) contrast_step_) { return; }
+
+    contrast_step_ = (uint8_t) step;
+    contrast_pending_ = true;
+
+    const unsigned tenths = contrast_tenths();
+
+    LOG("ui: contrast %u.%uV", tenths / 10U, tenths % 10U);
+
+    dirty_ = true;
+}
+
+bool Ui::take_contrast(uint16_t &vop) {
+    if (!contrast_pending_) { return false; }
+    contrast_pending_ = false;
+    vop = contrast_vop(contrast_step_);
+    return true;
+}
+
 void Ui::activate() {
     switch (menu[cursor_].id) {
     case ItemId::backlight:
         backlight_ = !backlight_;
         cfg_.lcd->backlight(backlight_);
         LOG("ui: backlight %s", backlight_ ? "on" : "off");
+        break;
+
+    case ItemId::contrast:
+        editing_ = true;
         break;
 
     case ItemId::test_sound:
@@ -140,6 +182,32 @@ void Ui::handle(Action a) {
         case Action::select:
             screen_ = Screen::menu;
             cursor_ = 0U;
+            dirty_ = true;
+            break;
+
+        default:
+            break;
+        }
+
+        return;
+    }
+
+    /* Editing takes the cursor keys over, so it has to come first. Both
+       select and back leave: the value is applied as it changes, so there is
+       no pending edit for one of them to discard. */
+    if (editing_) {
+        switch (a) {
+        case Action::up:
+            adjust_contrast(+1);
+            break;
+
+        case Action::down:
+            adjust_contrast(-1);
+            break;
+
+        case Action::select:
+        case Action::back:
+            editing_ = false;
             dirty_ = true;
             break;
 
@@ -232,8 +300,25 @@ void Ui::draw_menu() {
 
         cfg_.lcd->text(label_x, row_y, menu[i].label);
 
-        if (menu[i].id == ItemId::backlight) {
+        switch (menu[i].id) {
+        case ItemId::backlight:
             cfg_.lcd->text(value_x, row_y, backlight_ ? "on" : "off");
+            break;
+
+        /* Brackets mark the value the cursor keys are moving, so the mode is
+           visible without a second cursor or a separate screen. */
+        case ItemId::contrast: {
+            const unsigned tenths = contrast_tenths();
+
+            char value[12];
+            chsnprintf(value, sizeof value, editing_ ? "[%u.%uV]" : "%u.%uV", tenths / 10U, tenths % 10U);
+            cfg_.lcd->text(value_x, row_y, value);
+            break;
+        }
+
+        /* The rest carry no state to show. */
+        default:
+            break;
         }
     }
 }

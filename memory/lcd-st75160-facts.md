@@ -17,6 +17,12 @@ ST75160i controller, I2C address **0x3F**, max 400kHz. Driver lives in
   their own transaction (`0x00,cmd` / `0x40,param`), as in Newhaven's code; a
   frame can be one `0x40` control byte followed by the whole stream.
 - `V0 = 3.6 + Vop[8:0] * 0.04`, so the datasheet's `0x81 0x08 0x03` is 11.6V.
+  Vop is split across the two parameter bytes as low 6 bits then high 3, which
+  is what makes `0x08, 0x03` mean 200. `0x81` is in extension command set 1,
+  so select it with `0x30` first - `init_script` leaves the panel in set 2.
+  **Vop 150..250 (9.6V..13.6V) is the usable range**, confirmed by eye on
+  Rev1C: legible across the whole span, visibly light at the bottom and dark
+  at the top. That is what the menu's contrast setting exposes.
 - The panel's rows run **bottom to top**: `pixel()` flips y so the driver API
   has a top-left origin. There is no command for this - `0xBC` only sets the
   address scan direction and column order, and **COMSCN has no effect on

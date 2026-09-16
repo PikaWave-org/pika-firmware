@@ -9,6 +9,14 @@
  *   menu:  up/down  move the cursor
  *          select   activates the item under it
  *          back     returns home
+ *   edit:  up/down  change the value under the cursor
+ *          select   leaves the value where it is
+ *          back     the same - there is nothing to cancel, every change has
+ *                   already been applied and seen
+ *
+ * Editing is a mode of the menu rather than a screen of its own: the rows stay
+ * where they are and only the value's rendering changes, so the eye does not
+ * have to find the setting again after every press.
  *
  * A new screen is an enumerator and a draw_*(); a new menu entry is a row in
  * the table in ui.cpp and a case in activate().
@@ -76,6 +84,15 @@ public:
         return true;
     }
 
+    /**
+     * @brief   True once if the contrast needs sending to the panel, in
+     *          which case @p vop receives the value to send.
+     * @note    Like take_dirty(), for the same reason: the command is an I2C
+     *          transaction sharing the sequencing buffer with flush(), so the
+     *          UI only records the change and the panel's owner applies it.
+     */
+    bool take_contrast(uint16_t &vop);
+
 private:
 
     /* 20 steps, so the display moves in 5% increments. */
@@ -91,6 +108,19 @@ private:
     /* Below this the taper goes linear, see volume_gain(). */
     static constexpr uint8_t volume_knee_step = 2;
 
+    /* Contrast as the panel's Vop word, where V0 = 3.6 + vop * 0.04 volts.
+       150..250 is 9.6V to 13.6V, a spread wide enough to go visibly light and
+       visibly dark while staying well inside what the panel is rated for. */
+    static constexpr uint16_t contrast_vop_min = 150U;
+    static constexpr uint16_t contrast_vop_step = 10U;
+
+    /* 10 steps of 0.4V, so 11 values. */
+    static constexpr uint8_t contrast_steps = 10U;
+
+    /* Vop 200, which is what init() programs: changing one without the other
+       would make the menu disagree with the panel until the first press. */
+    static constexpr uint8_t contrast_initial = 5U;
+
     enum class Screen : uint8_t { home, menu };
 
     /* What a press means, rather than which pad it came from. */
@@ -98,12 +128,15 @@ private:
 
     static Action action_of(pika::input::Button b);
     static float volume_gain(uint8_t step);
+    static uint16_t contrast_vop(uint8_t step);
 
     unsigned volume_percent() const;
+    unsigned contrast_tenths() const;
 
     void handle(Action a);
     void activate();
     void adjust_volume(int delta);
+    void adjust_contrast(int delta);
 
     void draw_home();
     void draw_menu();
@@ -116,6 +149,9 @@ private:
     volatile Screen screen_;
     volatile uint8_t cursor_;
     volatile bool backlight_;
+    volatile uint8_t contrast_step_;
+    volatile bool contrast_pending_;
+    volatile bool editing_;
 };
 
 }  // namespace pika::ui
