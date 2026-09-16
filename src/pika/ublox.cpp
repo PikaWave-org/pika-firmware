@@ -109,12 +109,16 @@ void Ublox::run() {
   }
 }
 
-bool Ublox::nav_pvt(msg_rx_nav_pvt_s &msg) const {
+bool Ublox::nav_pvt(msg_rx_nav_pvt_s &msg, uint32_t *age_ms) const {
   chMtxLock(&_lock);
   bool got = _got_nav_pvt;
 
   if (got) {
     msg = _nav_pvt;
+
+    if (age_ms != nullptr) {
+      *age_ms = (uint32_t)TIME_I2MS(chVTTimeElapsedSinceX(_nav_pvt_time));
+    }
   }
 
   chMtxUnlock(&_lock);
@@ -122,12 +126,16 @@ bool Ublox::nav_pvt(msg_rx_nav_pvt_s &msg) const {
   return got;
 }
 
-bool Ublox::mon_hw(msg_rx_mon_hw_s &msg) const {
+bool Ublox::mon_hw(msg_rx_mon_hw_s &msg, uint32_t *age_ms) const {
   chMtxLock(&_lock);
   bool got = _got_mon_hw;
 
   if (got) {
     msg = _mon_hw;
+
+    if (age_ms != nullptr) {
+      *age_ms = (uint32_t)TIME_I2MS(chVTTimeElapsedSinceX(_mon_hw_time));
+    }
   }
 
   chMtxUnlock(&_lock);
@@ -478,6 +486,7 @@ void Ublox::handle_message(Message *msg) {
 
       chMtxLock(&_lock);
       _nav_pvt = *ubx_pvt;
+      _nav_pvt_time = chVTGetSystemTimeX();
       _got_nav_pvt = true;
       chMtxUnlock(&_lock);
 
@@ -505,6 +514,7 @@ void Ublox::handle_message(Message *msg) {
 
       chMtxLock(&_lock);
       _mon_hw = *ubx_hw;
+      _mon_hw_time = chVTGetSystemTimeX();
       _got_mon_hw = true;
       chMtxUnlock(&_lock);
 

@@ -156,17 +156,33 @@ public:
      * Copied out under the lock, so the caller cannot observe a half-updated
      * message while the driver thread is writing one.
      *
-     * @return false if no NAV-PVT has arrived yet, leaving msg untouched.
+     * These accessors hand back the last message that arrived, however long
+     * ago that was, so on their own they cannot distinguish live data from a
+     * receiver that stopped talking an hour ago. Ask for age_ms and report it
+     * anywhere the values are shown: a stale solution is made of entirely
+     * plausible numbers, and the resulting false confidence has already cost
+     * this project a wrong conclusion once - see
+     * memory/gnss-slow-clock-emi-dead-end.md.
+     *
+     * age_ms is read under the same lock as the message, so it always belongs
+     * to the copy returned and cannot be raced against it.
+     *
+     * @param   age_ms  if not null, milliseconds since this message arrived.
+     * @return false if no NAV-PVT has arrived yet, leaving both untouched.
      */
-    bool nav_pvt(msg_rx_nav_pvt_s &msg) const;
+    bool nav_pvt(msg_rx_nav_pvt_s &msg, uint32_t *age_ms = nullptr) const;
 
     /// Last MON-HW received: noise, AGC, antenna and jamming state.
     /**
-     * Copied out under the same lock as nav_pvt(), for the same reason.
+     * Copied out under the same lock as nav_pvt(), for the same reason, and
+     * goes stale the same way - more dangerously, in fact, because MON-HW
+     * carries no equivalent of NAV-PVT's iTOW to make a frozen message
+     * obvious. Report age_ms with it.
      *
-     * @return false if no MON-HW has arrived yet, leaving msg untouched.
+     * @param   age_ms  if not null, milliseconds since this message arrived.
+     * @return false if no MON-HW has arrived yet, leaving both untouched.
      */
-    bool mon_hw(msg_rx_mon_hw_s &msg) const;
+    bool mon_hw(msg_rx_mon_hw_s &msg, uint32_t *age_ms = nullptr) const;
 
     /// Frames received, and frames dropped for a bad sync or checksum.
     /**
@@ -249,10 +265,14 @@ private:
 
     Config _cfg;
 
+    /* The arrival times are guarded with their messages, so a caller always
+       gets an age that belongs to the copy it was handed. */
     mutable mutex_t _lock;      ///< Guards _nav_pvt and _mon_hw against the getters
     msg_rx_nav_pvt_s _nav_pvt = {};
+    systime_t _nav_pvt_time = 0;
     bool _got_nav_pvt = false;
     msg_rx_mon_hw_s _mon_hw = {};
+    systime_t _mon_hw_time = 0;
     bool _got_mon_hw = false;
 
     HWProtocolVersion _version;

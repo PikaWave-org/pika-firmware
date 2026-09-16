@@ -104,8 +104,9 @@ static const char *antenna_text(uint8_t status) {
 static void log_gnss() {
 
     pika::gnss::msg_rx_nav_pvt_s pvt;
+    uint32_t age_ms = 0;
 
-    if (!gnss.nav_pvt(pvt)) {
+    if (!gnss.nav_pvt(pvt, &age_ms)) {
         LOG("gnss: no solution yet, frames %u errors %u", (unsigned) gnss.frames(), (unsigned) gnss.errors());
         return;
     }
@@ -117,10 +118,10 @@ static void log_gnss() {
     format_deg(lat, sizeof lat, pvt.lat);
     format_deg(lon, sizeof lon, pvt.lon);
 
-    LOG("gnss: iTOW=%u fix=%u%s sv=%u lat=%s lon=%s alt=%dm hacc=%um pdop=%u.%02u frames=%u errors=%u",
-        (unsigned) (pvt.iTOW / 1000), (unsigned) pvt.fixType, fix_ok ? "" : "!", (unsigned) pvt.numSV, lat, lon,
-        (int) (pvt.hMSL / 1000), (unsigned) (pvt.hAcc / 1000U), (unsigned) (pvt.pDOP / 100U),
-        (unsigned) (pvt.pDOP % 100U), (unsigned) gnss.frames(), (unsigned) gnss.errors());
+    LOG("gnss: age=%us iTOW=%u fix=%u%s sv=%u lat=%s lon=%s alt=%dm hacc=%um pdop=%u.%02u frames=%u errors=%u",
+        (unsigned) (age_ms / 1000U), (unsigned) (pvt.iTOW / 1000), (unsigned) pvt.fixType, fix_ok ? "" : "!",
+        (unsigned) pvt.numSV, lat, lon, (int) (pvt.hMSL / 1000), (unsigned) (pvt.hAcc / 1000U),
+        (unsigned) (pvt.pDOP / 100U), (unsigned) (pvt.pDOP % 100U), (unsigned) gnss.frames(), (unsigned) gnss.errors());
 
     /* Date, time and the UTC offset all have to be resolved before the
        timestamp is worth printing. */
@@ -142,15 +143,20 @@ static void log_gnss() {
 static void log_mon_hw() {
 
     pika::gnss::msg_rx_mon_hw_s hw;
+    uint32_t age_ms = 0;
 
-    if (!gnss.mon_hw(hw)) {
+    if (!gnss.mon_hw(hw, &age_ms)) {
         LOG("gnss: no hw status yet");
         return;
     }
 
-    LOG("gnss: hw noise=%u agc=%u jam=%u jamstate=%u ant=%s apwr=%u flags=0x%02x", (unsigned) hw.noisePerMS,
-        (unsigned) hw.agcCnt, (unsigned) hw.jamInd, (unsigned) pika::gnss::jamming_state(hw), antenna_text(hw.aStatus),
-        (unsigned) hw.aPower, (unsigned) hw.flags);
+    /* age leads the line deliberately. Everything after it stays plausible
+       forever once the link dies - noise and AGC do not decay, and MON-HW has
+       no iTOW to visibly stop advancing - so the age is the only thing on the
+       line that says whether any of it is still true. */
+    LOG("gnss: hw age=%us noise=%u agc=%u jam=%u jamstate=%u ant=%s apwr=%u flags=0x%02x", (unsigned) (age_ms / 1000U),
+        (unsigned) hw.noisePerMS, (unsigned) hw.agcCnt, (unsigned) hw.jamInd, (unsigned) pika::gnss::jamming_state(hw),
+        antenna_text(hw.aStatus), (unsigned) hw.aPower, (unsigned) hw.flags);
 }
 
 /*
