@@ -17,6 +17,7 @@ design rules in CLAUDE.md instead of here.
 - [Button pinout and the EXTI-10 collision](button-driver-exti10-collision.md) — the seven button pads, and why an EXTI channel is chosen by pad *number*, not port, so BTN_PWR has to be polled.
 - [LCD ST75160 facts](lcd-st75160-facts.md) — I2C address, the mono RAM layout whose bit order is the opposite of SSD1306, framing, contrast formula, readback.
 - [Schematics live in a sibling repo](hardware-repo-schematics.md) — where they are, and how to resolve a net to an MCU pin without kicad-cli.
+- [Microphone front end](mic-adc-front-end.md) — PA6 is ADC1_INP3 and EXTSEL 13 is TIM6_TRGO, both confirmed on the bench; why MIC_SHDN is active low; and the ADC3 setting a part without an ADC3 still needs.
 
 ## Traps that cost a session each
 
