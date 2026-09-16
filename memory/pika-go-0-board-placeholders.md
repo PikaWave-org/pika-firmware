@@ -28,4 +28,4 @@ board template.
 
 **How to apply:** keep the PC15 enable ahead of `stm32_clock_init()`; if the
 HSE frequency changes, revisit `STM32_PLLx_DIVM/DIVN` in
-`boards/pika_go_0/cfg/mcuconf.h` together. See [[build-scope-minimal-cmake]].
+`boards/pika_go_0/cfg/mcuconf.h` together.

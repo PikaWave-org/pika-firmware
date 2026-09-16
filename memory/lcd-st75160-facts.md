@@ -7,7 +7,7 @@ metadata:
 
 Newhaven NHD-C160100DiZ-FSW-FBW **Rev1C** (label on the module back), 160x100,
 ST75160i controller, I2C address **0x3F**, max 400kHz. Driver lives in
-`src/st75160.cpp`.
+`src/pika/lcd/ST75160.cpp`.
 
 - Monochrome mode (`0xF0`,`0x10`): one byte is **8 vertical pixels**, and
   **D7 is the top** row of the page - the opposite of the SSD1306/u8g2

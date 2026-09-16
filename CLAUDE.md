@@ -1,5 +1,43 @@
 # Working on pika-firmware
 
+## Read `memory/` first
+
+Hard-won facts about this board live in `memory/`, one file per fact, indexed
+in `memory/MEMORY.md`. Read that index at the start of a session and open the
+notes it points at when they touch what you are doing — they record hardware
+quirks, dead ends already explored and the measurements behind them, and most
+cost a session each to learn. Add to it when you learn something that the code
+cannot say for itself, and delete a note when it stops being true.
+
+## Keep it small
+
+This is firmware for one board with one MCU. Abstraction that is not paying for
+itself now is cost, not insurance: prefer the plainest mechanism that meets the
+requirement, a table and a switch over a class hierarchy until there is a second
+real case, and let a comment carry the design rather than the type system. The
+build system is deliberately hardcoded to this target — don't generalize it.
+
+When a simplification trades something away, say what the trade is rather than
+hiding it. To support a new peripheral or MCU, extend the hardcoded lists in
+`cmake/chibios.cmake` rather than adding per-MCU abstraction or auto-discovery.
+
+## Code style
+
+Headers under `src/pika/` are included with angle brackets and their full path
+from `src/` — `<pika/log.h>`, `<pika/audio/DACSpeaker.h>` — in their own sorted
+block. Quotes are only for a file's own header, a sibling in the same directory,
+and third-party headers (`"ch.h"`, `"hal.h"`, `"chprintf.h"`). Generated headers
+follow the same rule; they land under `build/generated_src/pika/...`.
+
+**`.clang-format` does not round-trip.** The committed files were formatted by
+CLion's bundled clang-format, so running plain `clang-format` over a whole file
+proposes changes to lines nobody touched and buries the real diff. Format only
+what you added: `clang-format -i --lines=<start>:<end> <file>`. The tree is
+deliberately mixed 2-space and 4-space — match the file you are editing, not the
+config. Run it on the file in place: clang-format searches upward from the
+file's own directory, so formatting a copy in `/tmp` silently falls back to
+LLVM defaults and the diff is meaningless.
+
 ## The board is shared — take the lock
 
 One Pika board is attached to this machine, and several agents work on this
