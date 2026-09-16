@@ -1,9 +1,9 @@
 #include "ch.h"
 #include "hal.h"
 
-#include "st75160.h"
+#include "ST75160.h"
 
-#include <pika/font8x8.h>
+#include <pika/lcd/Font8x8.h>
 
 namespace pika::lcd {
 namespace {
@@ -112,7 +112,7 @@ const uint8_t frame_addr[] = {
   CMD(0x30),                                /* extension command set 1      */
   CMD(0x15), PAR(0x00), PAR(0x9F),          /* columns 0..159               */
   CMD(0x75), PAR(0x00),
-  PAR(St75160::pages - 1),                  /* pages 0..12                  */
+  PAR(ST75160::pages - 1),                  /* pages 0..12                  */
   CMD(0x5C)                                 /* write data                   */
 };
 
@@ -132,14 +132,14 @@ const uint8_t frame_addr[] = {
  *     MPU region configured by STM32_NOCACHE_RBAR covers exactly this
  *     section.
  *
- * These buffers are deliberately file-static rather than members of St75160:
+ * These buffers are deliberately file-static rather than members of ST75160:
  * the placement above is the whole point of them, and making them members
  * would hand that responsibility to whoever declares the object. The cost is
  * that one instance is the supported case, which is what the board has.
  */
 #define DMA_BUF __attribute__((section(".nocache"), aligned(4)))
 
-DMA_BUF uint8_t frame_tx[1 + St75160::fb_size];  /* control byte + frame */
+DMA_BUF uint8_t frame_tx[1 + ST75160::fb_size];  /* control byte + frame */
 
 /*
  * Scratch for run_co1(): a whole script emitted as one transaction with Co=1
@@ -162,11 +162,10 @@ DMA_BUF uint8_t seq_buf[192];
  * cache rather than to the memory DMA reads. Nothing needs writing this
  * early - init() sets the control byte along with the rest of the frame.
  */
-St75160::St75160(const Config &cfg) : cfg_(cfg), fb_(&frame_tx[1]) {
+ST75160::ST75160(const Config &cfg) : cfg_(cfg), fb_(&frame_tx[1]) {
 }
 
-bool St75160::xfer(const uint8_t *buf, size_t len, sysinterval_t timeout) {
-
+bool ST75160::xfer(const uint8_t *buf, size_t len, sysinterval_t timeout) {
   /* A transfer that timed out leaves the driver in I2C_LOCKED, and the high
      level driver asserts on any further call in that state, so the bus is
      restarted before giving up on the transfer.*/
@@ -202,8 +201,7 @@ bool St75160::xfer(const uint8_t *buf, size_t len, sysinterval_t timeout) {
  * Releasing the pins to GPIO, clocking out any half sent byte and issuing a
  * STOP puts the bus back into the idle state.
  */
-void St75160::bus_recover() {
-
+void ST75160::bus_recover() {
   i2cStop(cfg_.i2c);
 
   /* The output latches have to be set before the pins become outputs: they
@@ -237,8 +235,7 @@ void St75160::bus_recover() {
   palSetLineMode(cfg_.sda, cfg_.pinmode);
 }
 
-bool St75160::run_co1(const uint8_t *script, size_t len) {
-
+bool ST75160::run_co1(const uint8_t *script, size_t len) {
   size_t i = 0U;
   size_t n = 0U;
 
@@ -269,8 +266,7 @@ bool St75160::run_co1(const uint8_t *script, size_t len) {
   return (n == 0U) || xfer(seq_buf, n, TIME_MS2I(100));
 }
 
-bool St75160::init(bool skip_otp) {
-
+bool ST75160::init(bool skip_otp) {
   error_flags_ = 0U;
   ready_ = false;
   frame_tx[0] = ctrl_data;
@@ -310,16 +306,14 @@ bool St75160::init(bool skip_otp) {
   return true;
 }
 
-void St75160::clear(bool on) {
-
+void ST75160::clear(bool on) {
   uint8_t v = on ? 0xFFU : 0x00U;
   for (unsigned i = 0U; i < fb_size; i++) {
     fb_[i] = v;
   }
 }
 
-void St75160::pixel(int x, int y, bool on) {
-
+void ST75160::pixel(int x, int y, bool on) {
   if ((x < 0) || (x >= width) || (y < 0) || (y >= height)) {
     return;
   }
@@ -342,8 +336,7 @@ void St75160::pixel(int x, int y, bool on) {
   }
 }
 
-void St75160::rect(int x, int y, int w, int h, bool on) {
-
+void ST75160::rect(int x, int y, int w, int h, bool on) {
   for (int j = y; j < (y + h); j++) {
     for (int i = x; i < (x + w); i++) {
       pixel(i, j, on);
@@ -351,8 +344,7 @@ void St75160::rect(int x, int y, int w, int h, bool on) {
   }
 }
 
-void St75160::frame(int x, int y, int w, int h, bool on) {
-
+void ST75160::frame(int x, int y, int w, int h, bool on) {
   for (int i = x; i < (x + w); i++) {
     pixel(i, y, on);
     pixel(i, y + h - 1, on);
@@ -363,8 +355,7 @@ void St75160::frame(int x, int y, int w, int h, bool on) {
   }
 }
 
-int St75160::text(int x, int y, const char *s, bool on) {
-
+int ST75160::text(int x, int y, const char *s, bool on) {
   for (; *s != '\0'; s++) {
     char c = *s;
     if ((c < font8x8_first) || (c > font8x8_last)) {
@@ -386,8 +377,7 @@ int St75160::text(int x, int y, const char *s, bool on) {
   return x;
 }
 
-bool St75160::flush() {
-
+bool ST75160::flush() {
   if (!ready_) {
     return false;
   }
@@ -399,8 +389,7 @@ bool St75160::flush() {
   return xfer(frame_tx, sizeof frame_tx, TIME_MS2I(500));
 }
 
-void St75160::backlight(bool on) {
-
+void ST75160::backlight(bool on) {
   if (on) {
     palSetLine(cfg_.bklt);
   }

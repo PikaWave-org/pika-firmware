@@ -50,7 +50,7 @@
  * data: the CPU's writes sit in cache lines while DMA reads stale RAM, and
  * DMA's writes land in RAM under stale cache lines. Rather than give up the
  * cache, an MPU region covers the .nocache section - AHB SRAM2, where the
- * I2C buffers live, see the linker script and src/pika/st75160.cpp.
+ * I2C buffers live, see the linker script and src/pika/lcd/ST75160.cpp.
  */
 #define STM32_NOCACHE_ENABLE                TRUE
 #define STM32_NOCACHE_MPU_REGION            MPU_REGION_6
@@ -302,7 +302,7 @@
  *     right direction - and the panel still goes blank.
  *
  * Both halves were established on hardware 2026-09-12. Changing either one,
- * or the buffer placement in src/pika/st75160.cpp, needs a check on the real
+ * or the buffer placement in src/pika/lcd/ST75160.cpp, needs a check on the real
  * panel afterwards: the bring-up image that main() draws is the test, since
  * a transport that moves nothing leaves the display blank while every return
  * code stays clean.

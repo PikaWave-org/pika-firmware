@@ -13,7 +13,6 @@
  */
 static THD_WORKING_AREA(waHeartbeat, 512);
 static THD_FUNCTION(heartbeat, arg) {
-
   (void)arg;
   chRegSetThreadName("heartbeat");
 
@@ -30,7 +29,6 @@ static THD_FUNCTION(heartbeat, arg) {
 }
 
 int main() {
-
   halInit();
   chSysInit();
 

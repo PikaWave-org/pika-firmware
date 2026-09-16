@@ -164,7 +164,6 @@ void DACSpeaker::fill_cb(DACDriver *dacp) {
  * result is clamped because -32768 would otherwise land one code low.
  */
 void DACSpeaker::scale(std::span<dacsample_t> buf) const {
-
     const float scale = volume_ * float(DAC_VALUE_MID) / 32768.0f;
     const int16_t *in = reinterpret_cast<const int16_t *>(buf.data());
 

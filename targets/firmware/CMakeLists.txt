@@ -3,8 +3,10 @@ pika_add_firmware(firmware
         SOURCES
                 main.cpp
                 ${SRC_ROOT}/pika/log.cpp
+                ${SRC_ROOT}/pika/buttons.cpp
                 ${SRC_ROOT}/pika/audio/DACSpeaker.cpp
-                ${SRC_ROOT}/pika/st75160.cpp
+                ${SRC_ROOT}/pika/lcd/ST75160.cpp
+                ${SRC_ROOT}/pika/ui.cpp
                 ${SRC_ROOT}/pika/ublox.cpp)
 
 # Sound effects, generated from sounds/ into the build tree at build time.

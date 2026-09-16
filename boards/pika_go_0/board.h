@@ -78,6 +78,13 @@
 #define LINE_MIC_EN                 PAL_LINE(GPIOA, 7U)
 #define LINE_GNSS_TX                PAL_LINE(GPIOD, 5U)
 #define LINE_GNSS_RX                PAL_LINE(GPIOD, 6U)
+#define LINE_BTN_PWR                PAL_LINE(GPIOE, 10U)
+#define LINE_BTN_UP                 PAL_LINE(GPIOD, 10U)
+#define LINE_BTN_DOWN               PAL_LINE(GPIOD, 11U)
+#define LINE_BTN_RIGHT              PAL_LINE(GPIOD, 14U)
+#define LINE_BTN_LEFT               PAL_LINE(GPIOC, 4U)
+#define LINE_BTN_PTT                PAL_LINE(GPIOC, 5U)
+#define LINE_BTN_LSN                PAL_LINE(GPIOB, 2U)
 
 /* Serial driver behind the debug UART pins above. */
 #define BOARD_DBG_SERIAL            SD3
@@ -133,6 +140,25 @@
 #define BOARD_GNSS_SERIAL           SD2
 #define BOARD_GNSS_BAUD_BOOT        9600U
 #define BOARD_GNSS_BAUD_RUN         115200U
+
+/*
+ * Front panel buttons.
+ *
+ * All seven short their line to ground when pressed and rely on the MCU's
+ * internal pull-up, so a pressed button reads low.
+ *
+ * Six of them are interrupt driven, but BTN_PWR cannot be: an EXTI channel is
+ * selected by pad number and can be mapped to only one port at a time, and
+ * PE10 and PD10 both want channel 10. ChibiOS catches the second one with a
+ * "channel already in use" assertion. PD10 (BTN_UP) keeps the interrupt and
+ * PE10 is polled instead, which costs it up to BOARD_BTN_POLL_MS of latency.
+ * Moving BTN_PWR to a pad whose number no other button uses would let the
+ * driver drop its polling path entirely.
+ *
+ * The remaining six sit on channels 10, 11, 14, 4, 5 and 2, all distinct.
+ */
+#define BOARD_BTN_DEBOUNCE_MS       20U
+#define BOARD_BTN_POLL_MS           10U
 
 /*===========================================================================*/
 /* External declarations.                                                    */

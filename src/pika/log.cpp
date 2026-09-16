@@ -27,21 +27,18 @@ BaseSequentialStream *const stream =
  * wraps back to zero after ~4.9 days of uptime.
  */
 uint32_t uptime_ms() {
-
   return (uint32_t)chTimeI2MS((sysinterval_t)chVTGetSystemTimeX());
 }
 
 } /* anonymous namespace */
 
 void log_init() {
-
   chMtxObjectInit(&lock);
   sdStart(&BOARD_DBG_SERIAL, nullptr);
   started = true;
 }
 
 void log_printf(const char *fmt, ...) {
-
   if (!started) {
     return;
   }

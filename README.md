@@ -14,6 +14,20 @@ cmake --build build
 Produces `build/targets/firmware/firmware.elf` and
 `build/targets/test/test.elf`.
 
+## Running on hardware
+
+The board is a single shared resource — its SWD link and its debug log on
+`/dev/ttyACM0` both break if two processes use them at once. `tools/hw`
+serializes access behind a machine-wide lock:
+
+```
+tools/hw status                 # who holds the board
+tools/hw check 15 -r "buttons"  # build, flash and capture the log, without
+                                # releasing the board in between
+```
+
+See `tools/hw help` for the rest, and `CLAUDE.md` for the rule.
+
 ## Layout
 
 - `boards/<board>/` — hardware description reused by every firmware image:

@@ -64,6 +64,17 @@ static void stm32_gpio_init(void) {
     palSetLineMode(LINE_GNSS_TX, PAL_MODE_ALTERNATE(7U) | PAL_STM32_OSPEED_MID2);
     palSetLineMode(LINE_GNSS_RX, PAL_MODE_ALTERNATE(7U) | PAL_STM32_PUPDR_PULLUP);
 
+    /* Front panel buttons. They short to ground, so the internal pull-up is
+     what holds the line high while the button is up; see board.h for why
+     BTN_PWR ends up polled rather than interrupt driven.*/
+    palSetLineMode(LINE_BTN_PWR, PAL_MODE_INPUT_PULLUP);
+    palSetLineMode(LINE_BTN_UP, PAL_MODE_INPUT_PULLUP);
+    palSetLineMode(LINE_BTN_DOWN, PAL_MODE_INPUT_PULLUP);
+    palSetLineMode(LINE_BTN_RIGHT, PAL_MODE_INPUT_PULLUP);
+    palSetLineMode(LINE_BTN_LEFT, PAL_MODE_INPUT_PULLUP);
+    palSetLineMode(LINE_BTN_PTT, PAL_MODE_INPUT_PULLUP);
+    palSetLineMode(LINE_BTN_LSN, PAL_MODE_INPUT_PULLUP);
+
     /* The HSE oscillator has to be running before stm32_clock_init().*/
     palSetLine(LINE_HSE_EN);
 }

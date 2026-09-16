@@ -1,0 +1,279 @@
+#!/bin/bash
+#
+# hw - serialize access to the attached Pika hardware. See usage() below.
+
+set -u -o pipefail
+
+usage() {
+    cat <<'EOF'
+hw - serialize access to the attached Pika hardware.
+
+The SWD link and the J-Link VCOM log cannot be shared: a second reader on the
+VCOM silently splits the byte stream, and a flash landing in someone else's
+capture looks like a firmware bug. Everything that touches the board goes
+through here, behind a machine-wide flock shared by every worktree.
+
+  hw status                   who holds the board right now
+  hw flash [--build-dir D]    build, then program over SWD
+  hw log SECONDS [-o FILE]    capture the debug log
+  hw check SECONDS [-o FILE]  flash and capture as ONE critical section
+  hw exec -- CMD...           flash, then run CMD, as ONE critical section
+  hw run -- CMD...            run CMD holding the lock
+
+  -w SECS   how long to wait for the lock (default 900)
+  -r WHY    a short note shown to whoever is waiting
+
+The lock stops two agents using the board at once; it does NOT stop the image
+on the board from being someone else's. Anything that reads board state has to
+be flashed and read inside one hold - that is what "check" and "exec" are for.
+A bare "run" reads whatever image happens to be there.
+
+Never run a J-Link session and a VCOM capture at once: the attach truncates the
+log SWD-side and the result is indistinguishable from a firmware hang. "check"
+is safe; hand-rolling reset-and-capture inside "hw run" is how you get this
+wrong.
+
+The lock cannot cover a cu/screen session started by hand. "hw status" reports
+those - never kill one, ask for it to be detached.
+EOF
+}
+
+LOCK_FILE=${PIKA_HW_LOCK:-/tmp/pika-hw.lock}
+OWNER_FILE=${PIKA_HW_OWNER:-/tmp/pika-hw.owner}
+JLINK_SEEN_FILE=${PIKA_HW_JLINK_SEEN:-/tmp/pika-hw.jlink-seen.$$}
+PORT=${PIKA_HW_PORT:-/dev/ttyACM0}
+BAUD=${PIKA_HW_BAUD:-115200}
+
+SCRIPT_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+
+# Build the tree the CALLER is in, not the one this script lives in: worktrees
+# share the main checkout's tools/, so deriving it from $BASH_SOURCE would
+# program the wrong image and hand back a log from the wrong tree.
+REPO_ROOT=$(git -C "$PWD" rev-parse --show-toplevel 2>/dev/null) || REPO_ROOT=$SCRIPT_ROOT
+[ -f "$REPO_ROOT/CMakeLists.txt" ] || REPO_ROOT=$SCRIPT_ROOT
+BUILD_DIR=${PIKA_BUILD_DIR:-$REPO_ROOT/build}
+FW_TARGET=${PIKA_FW_TARGET:-firmware}
+
+WAIT_SECS=900
+REASON=""
+
+die() { printf 'hw: %s\n' "$*" >&2; exit 1; }
+note() { printf 'hw: %s\n' "$*" >&2; }
+
+# A stable name, so a stuck lock traces back to a session rather than to a pid
+# that has already gone.
+agent_id() {
+    if [ -n "${PIKA_HW_AGENT:-}" ]; then
+        printf '%s' "$PIKA_HW_AGENT"
+    elif [ -n "${CLAUDE_JOB_DIR:-}" ]; then
+        printf 'job:%s' "$(basename -- "$CLAUDE_JOB_DIR")"
+    else
+        printf 'pid:%s@%s' "$$" "$(basename -- "$REPO_ROOT")"
+    fi
+}
+
+# Readers of the VCOM that are not us. The user's own terminal shows up here,
+# and it is theirs - report it, never kill it.
+port_users() {
+    [ -e "$PORT" ] || return 0
+    fuser "$PORT" 2>/dev/null | tr -s ' ' '\n' | grep -E '^[0-9]+$' || true
+}
+
+cmd_status() {
+    if [ -e "$LOCK_FILE" ] && ! flock -n 9 9>>"$LOCK_FILE"; then
+        echo "board: LOCKED"
+        [ -s "$OWNER_FILE" ] && cat -- "$OWNER_FILE"
+    else
+        echo "board: free"
+    fi
+
+    if lsusb 2>/dev/null | grep -qi 'segger\|j-link'; then
+        echo "j-link: attached"
+    else
+        echo "j-link: NOT attached"
+    fi
+
+    if [ ! -e "$PORT" ]; then
+        echo "$PORT: absent"
+        return
+    fi
+
+    local users
+    users=$(port_users | tr '\n' ' ')
+    if [ -z "${users// /}" ]; then
+        echo "$PORT: idle"
+        return
+    fi
+
+    echo "$PORT: in use by pid(s) $users"
+    ps -o pid=,args= -p "${users// /,}" 2>/dev/null | sed 's/^/  /'
+    echo "  NOTE: if one of these is the user's own cu/screen session, do not"
+    echo "        kill it - ask them to detach, or read RAM over SWD instead."
+}
+
+# Run "$@" with the board lock held. Everything below funnels through here.
+with_lock() {
+    exec 9>>"$LOCK_FILE"
+
+    if ! flock -n 9; then
+        note "board busy, waiting up to ${WAIT_SECS}s..."
+        [ -s "$OWNER_FILE" ] && sed 's/^/hw:   /' -- "$OWNER_FILE" >&2
+        flock -w "$WAIT_SECS" 9 || die "timed out after ${WAIT_SECS}s waiting for the board.
+    Run 'tools/hw status' to see who holds it."
+    fi
+
+    {
+        echo "  holder: $(agent_id)"
+        echo "  pid:    $$"
+        echo "  since:  $(date -Is)"
+        echo "  doing:  ${REASON:-$*}"
+    } >"$OWNER_FILE"
+    # shellcheck disable=SC2064
+    trap "rm -f -- '$OWNER_FILE'" EXIT
+
+    "$@"
+}
+
+# Watch for a J-Link session for as long as we hold the pid. An attach during a
+# capture truncates the stream SWD-side and that looks exactly like a hang, so
+# the capture has to be scored as void rather than as a result.
+#
+# Match the process NAME, not the command line: with "pgrep -f" any shell whose
+# arguments merely mention JLinkExe matches, including this script's caller.
+# pgrep truncates names to 15 chars, so JLinkGDBServerCLExe arrives as
+# JLinkGDBServerC. JLinkGUIServerExe is excluded on purpose - it sits around
+# permanently holding no SWD session, so matching it would fire every time.
+watch_for_jlink() {
+    while :; do
+        if pgrep '^JLink(Exe|GDBServer)' >/dev/null 2>&1; then
+            pgrep -a '^JLink(Exe|GDBServer)' > "$JLINK_SEEN_FILE" 2>/dev/null
+            return
+        fi
+        # Poll fast: a scripted "reset and go" run can live well under half a
+        # second, and a missed one is a boot wrongly scored as hung.
+        sleep 0.1
+    done
+}
+
+# Configure the VCOM and capture it for a while. Assumes the lock is held.
+locked_log() {
+    local secs=$1 out=$2
+
+    local others
+    others=$(port_users | tr '\n' ' ')
+    if [ -n "${others// /}" ]; then
+        note "WARNING: $PORT already has reader(s) $others - the capture below will be"
+        note "         missing random runs of bytes. This is not a firmware fault."
+        ps -o pid=,args= -p "${others// /,}" 2>/dev/null | sed 's/^/hw:   /' >&2
+    fi
+
+    stty -F "$PORT" "$BAUD" raw -echo -echoe -echok -crtscts min 0 time 10 \
+        || die "cannot configure $PORT"
+
+    note "capturing $PORT for ${secs}s${out:+ -> $out}"
+
+    rm -f -- "$JLINK_SEEN_FILE"
+    watch_for_jlink &
+    local watcher=$!
+
+    if [ -n "$out" ]; then
+        timeout "$secs" cat -- "$PORT" | tee -- "$out"
+    else
+        timeout "$secs" cat -- "$PORT"
+    fi
+
+    kill "$watcher" 2>/dev/null || true
+    wait "$watcher" 2>/dev/null || true
+
+    if [ -s "$JLINK_SEEN_FILE" ]; then
+        note "WARNING: a J-Link session was running during this capture:"
+        sed 's/^/hw:   /' -- "$JLINK_SEEN_FILE" >&2
+        note "         The stream is very likely TRUNCATED, and truncation looks exactly"
+        note "         like a firmware hang. Do NOT score this boot."
+    fi
+    rm -f -- "$JLINK_SEEN_FILE"
+    return 0
+}
+
+locked_flash() {
+    # Say which tree this image comes from: several worktrees build the same
+    # target name, and the board keeps whatever was flashed last.
+    note "flashing $FW_TARGET from $BUILD_DIR"
+    # J-Link Commander exits 1 even on a good download, so the output is the
+    # only reliable signal - see cmake/chibios.cmake.
+    local out
+    out=$(cmake --build "$BUILD_DIR" --target "flash-$FW_TARGET" 2>&1)
+    printf '%s\n' "$out"
+    grep -qi 'Flash download.*O\.K\.\|O\.K\.' <<<"$out" \
+        || die "flash did not report O.K. - the board was NOT programmed"
+    note "flash OK"
+}
+
+# Flash, then inspect without releasing the board in between, so what you read
+# is provably the image you just programmed. "check" is this with locked_log.
+locked_exec() {
+    locked_flash
+    sleep 1
+    "$@"
+}
+
+# The build needs no hardware, so it runs before the lock is taken.
+build_fw() {
+    note "building $FW_TARGET.elf"
+    cmake --build "$BUILD_DIR" --target "$FW_TARGET.elf" >/dev/null \
+        || die "build failed - run: cmake --build $BUILD_DIR --target $FW_TARGET.elf"
+}
+
+main() {
+    local sub=${1:-status}
+    shift || true
+
+    local out="" secs=""
+    local -a rest=()
+    while [ $# -gt 0 ]; do
+        case $1 in
+            -w) WAIT_SECS=$2; shift 2 ;;
+            -r) REASON=$2; shift 2 ;;
+            -o) out=$2; shift 2 ;;
+            --build-dir) BUILD_DIR=$2; shift 2 ;;
+            --) shift; rest+=("$@"); break ;;
+            *) rest+=("$1"); shift ;;
+        esac
+    done
+
+    case $sub in
+        status)
+            cmd_status
+            ;;
+        flash)
+            build_fw
+            with_lock locked_flash
+            ;;
+        log)
+            secs=${rest[0]:-10}
+            with_lock locked_log "$secs" "$out"
+            ;;
+        check)
+            secs=${rest[0]:-15}
+            build_fw
+            with_lock locked_exec locked_log "$secs" "$out"
+            ;;
+        exec)
+            [ ${#rest[@]} -gt 0 ] || die "usage: hw exec -- CMD..."
+            build_fw
+            with_lock locked_exec "${rest[@]}"
+            ;;
+        run)
+            [ ${#rest[@]} -gt 0 ] || die "usage: hw run -- CMD..."
+            with_lock "${rest[@]}"
+            ;;
+        -h|--help|help)
+            usage
+            ;;
+        *)
+            die "unknown subcommand '$sub' (try: hw help)"
+            ;;
+    esac
+}
+
+main "$@"

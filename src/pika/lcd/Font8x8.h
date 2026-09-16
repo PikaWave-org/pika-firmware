@@ -12,7 +12,7 @@
 
 #include <cstdint>
 
-namespace pika {
+namespace pika::lcd {
 
 constexpr char font8x8_first = 0x20;
 constexpr char font8x8_last = 0x7E;
@@ -115,5 +115,5 @@ const uint8_t font8x8[95][8] = {
     { 0x6E, 0x3B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},  // U+007E (~)
 };
 
-} /* namespace pika */
+} /* namespace pika::lcd */
 

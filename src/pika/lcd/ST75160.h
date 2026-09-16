@@ -12,12 +12,12 @@
  *
  * Usage:
  *
- *   static const pika::lcd::St75160::Config lcd_cfg = {
+ *   static const pika::lcd::ST75160::Config lcd_cfg = {
  *     &BOARD_LCD_I2C, BOARD_LCD_I2C_ADDR,
  *     LINE_LCD_RST, LINE_LCD_BKLT,
  *     LINE_LCD_SCL, LINE_LCD_SDA, BOARD_LCD_I2C_PINMODE
  *   };
- *   static pika::lcd::St75160 lcd{lcd_cfg};
+ *   static pika::lcd::ST75160 lcd{lcd_cfg};
  *
  * @note  The transfer buffers, the framebuffer among them, are shared between
  *        all instances: they have to sit in the one region of memory the DMA
@@ -34,7 +34,7 @@
 
 namespace pika::lcd {
 
-class St75160 {
+class ST75160 {
 public:
 
   static constexpr int width = 160;
@@ -57,7 +57,7 @@ public:
     iomode_t   pinmode;   /**< Mode to restore on scl/sda after recovery.     */
   };
 
-  explicit St75160(const Config &cfg);
+  explicit ST75160(const Config &cfg);
 
   /**
    * @brief   Resets the panel and runs the initialization sequence.
