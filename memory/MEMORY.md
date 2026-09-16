@@ -17,14 +17,12 @@ design rules in CLAUDE.md instead of here.
 - [Button pinout and the EXTI-10 collision](button-driver-exti10-collision.md) — the seven button pads, and why an EXTI channel is chosen by pad *number*, not port, so BTN_PWR has to be polled.
 - [LCD ST75160 facts](lcd-st75160-facts.md) — I2C address, the mono RAM layout whose bit order is the opposite of SSD1306, framing, contrast formula, readback.
 - [Schematics live in a sibling repo](hardware-repo-schematics.md) — where they are, and how to resolve a net to an MCU pin without kicad-cli.
-- [GNSS front-end baseline](gnss-front-end-baseline.md) — healthy MON-HW noise and AGC ranges, the disconnected-antenna signature, and why jamInd means nothing without CFG-ITFM.
 
 ## Traps that cost a session each
 
 - [I2C DMA silently moves nothing](i2c-dma-silently-broken.md) — DMA needs D2 SRAM buffers *and* an MPU no-cache region, or it transfers zero bytes and reports success.
 - [Busy-waits starve every thread](chibios-busy-wait-starves-threads.md) — round-robin is off, so one unbounded spin stops the whole board and looks like a hard fault.
 - [Worktrees need their submodules initialised](worktree-needs-submodules-init.md) — a fresh worktree will not build until you populate `submodules/`, and `--reference` is how to do it without a slow clone.
-- [Slowing the core to cut EMI is a dead end](gnss-slow-clock-emi-dead-end.md) — 4MHz cannot service 115200, and the stale MON-HW it leaves behind reads like a negative result. The EMI question is still unmeasured.
 
 ## Working on the hardware
 

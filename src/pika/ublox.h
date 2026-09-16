@@ -160,9 +160,8 @@ public:
      * ago that was, so on their own they cannot distinguish live data from a
      * receiver that stopped talking an hour ago. Ask for age_ms and report it
      * anywhere the values are shown: a stale solution is made of entirely
-     * plausible numbers, and the resulting false confidence has already cost
-     * this project a wrong conclusion once - see
-     * memory/gnss-slow-clock-emi-dead-end.md.
+     * plausible numbers, so nothing about the values themselves betrays that
+     * the link behind them is dead.
      *
      * age_ms is read under the same lock as the message, so it always belongs
      * to the copy returned and cannot be raced against it.
