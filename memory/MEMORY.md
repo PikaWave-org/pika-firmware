@@ -22,7 +22,7 @@ design rules in CLAUDE.md instead of here.
 
 - [I2C DMA silently moves nothing](i2c-dma-silently-broken.md) — DMA needs D2 SRAM buffers *and* an MPU no-cache region, or it transfers zero bytes and reports success.
 - [Busy-waits starve every thread](chibios-busy-wait-starves-threads.md) — round-robin is off, so one unbounded spin stops the whole board and looks like a hard fault.
-- [Worktrees need a ChibiOS symlink](worktree-needs-chibios-symlink.md) — a fresh worktree will not build until you make it.
+- [Worktrees need their submodules initialised](worktree-needs-submodules-init.md) — a fresh worktree will not build until you populate `submodules/`, and `--reference` is how to do it without a slow clone.
 
 ## Working on the hardware
 
