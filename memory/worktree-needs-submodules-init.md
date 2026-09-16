@@ -14,14 +14,34 @@ new worktree still starts with it *empty*, and the build fails at configure
 time until it is populated:
 
 ```
-git submodule update --init --reference /home/ton/Pika/pika-firmware/submodules/ChibiOS submodules/ChibiOS
+git submodule update --init submodules/ChibiOS
 ```
 
-ChibiOS is a big, slow clone, so pass `--reference` at the shared checkout to
-take the objects off local disk rather than GitHub. Symlinking the shared
-directory in still works and is the fastest option when there is no network,
-but then the gitlink is not honoured — you get whatever commit the shared
-checkout happens to be on, not the one this branch records.
+Plain, with no `--reference`. It clones from GitHub and checks out the commit
+the branch records, and on 2026-09-17 took well under a minute.
+
+**Do not add `--reference` pointing at the shared checkout.** Its ChibiOS is
+itself a shallow clone and git refuses to borrow from one:
+
+```
+fatal: reference repository '/home/ton/Pika/pika-firmware/submodules/ChibiOS' is shallow
+fatal: clone of 'https://github.com/ChibiOS/ChibiOS.git' into submodule path ... failed
+```
+
+That failure leaves an empty `submodules/ChibiOS` behind, which has to be
+`rmdir`ed before anything else will work — and it is easy to misread as "the
+submodule cannot be populated here" and reach for a symlink instead.
+
+**Do not symlink the shared checkout in, now that ChibiOS is a submodule.**
+It builds, but it leaves the worktree in a state that is a trap for everyone
+sharing it: the index holds the gitlink while the working tree holds a
+symlink, so `git status` reports `T submodules/ChibiOS`, `git diff --summary`
+reports `mode change 160000 => 120000`, and **any `git commit -a` or
+`git add -A` silently records the symlink over the submodule pointer**,
+breaking the build for anyone who checks that branch out. The symlink also
+bypasses the gitlink, so you build whatever commit the shared checkout is on
+rather than the one recorded. Only reach for it with no network, and then add
+paths explicitly on every commit.
 
 Also check the branch point, twice over. `origin/main` lags local `main`, and
 worktrees are created from `origin/main` by default, so a fresh worktree can
