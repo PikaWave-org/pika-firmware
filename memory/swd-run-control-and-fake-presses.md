@@ -37,6 +37,24 @@ a real low level for the polled one. Halt, write PUPDR, resume, wait past the
 debounce, then write it back. GPIOD PUPDR is 0x58020C0C, GPIOE 0x5802100C.
 EXTI is 0x58000000 and SYSCFG_EXTICR1 is 0x58000408.
 
+All three navigation buttons live in GPIOD PUPDR, which rests at **0x10501000**,
+so a press is one whole-register write and needs no read-modify-write:
+
+| press | write to 0x58020C0C | pad | PUPDR bits |
+|-------|---------------------|-----|------------|
+| UP    | 0x10601000          | PD10 | 21:20 |
+| DOWN  | 0x10901000          | PD11 | 23:22 |
+| RIGHT | 0x20501000          | PD14 | 29:28 |
+
+RIGHT is both "open the menu" and "activate", so `right, down, right` reaches
+the second menu entry from the home screen. Confirmed twice on 2026-09-16, from
+two sessions, by reading `ui.screen_` and `ui.cursor_` back by name.
+
+**Do the whole sequence in one `gdb-multiarch -batch` invocation.** A fresh
+connect per press or per sample costs about a second, which is enough to step
+straight over what you are trying to observe - it silently missed a 1s sound
+clip in its entirety, and the run looked like a speaker that never played.
+
 **Never let a J-Link session overlap a VCOM capture.** Attaching JLinkExe or
 the GDB server while `cat /dev/ttyACM0` is running truncates the stream
 SWD-side, and the result is indistinguishable from a firmware hang: the log
