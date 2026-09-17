@@ -57,6 +57,7 @@ uint32_t mic_dc;       /* The driver's DC estimate, in raw ADC codes.       */
 uint32_t mic_peak;     /* Largest magnitude in the last block.              */
 uint32_t mic_rms;      /* RMS of the last block.                            */
 uint32_t mic_peak_max; /* Largest magnitude since the capture started.      */
+uint32_t mic_hold;     /* Peak with a decay, which is what the bar shows.   */
 
 class MicLevel : public pika::audio::AudioConsumer {
 public:
@@ -79,6 +80,18 @@ public:
 
         if (peak > mic_peak_max) { mic_peak_max = peak; }
 
+        /*
+         * Peak hold, rising instantly and falling about 3% a block. The panel
+         * is redrawn at 5Hz against 125 blocks a second, so the bare peak of
+         * whichever 8ms block the draw happened to land on is noise; this
+         * gives the bar a quarter second of memory and makes it readable.
+         */
+        if (peak > mic_hold) {
+            mic_hold = peak;
+        } else {
+            mic_hold -= mic_hold >> 5;
+        }
+
         mic_dc = mic.dc_level();
         mic_blocks++;
     }
@@ -87,33 +100,21 @@ public:
 static MicLevel mic_level;
 
 /*
- * A short listen at boot, to show that the capture path runs at all.
- *
- * It happens before any thread is created, and deliberately so: the panel's
- * flush wedges the heartbeat a few seconds in, taking the debug log with it,
- * and this is the last point at which a result can still be printed. It also
- * ends by releasing the sample clock, so the speaker is free afterwards.
- *
- * What the numbers mean: blocks at 125 a second says the trigger reaches the
- * converter, dc near mid scale says the channel is the biased preamp and not
- * a floating pin, and peak above the noise floor says the preamp is listening.
+ * True once mic.init() has succeeded, so the heartbeat knows there is a
+ * microphone worth starting.
  */
-static constexpr uint32_t mic_probe_ms = 2000U;
+static bool mic_ready;
 
-static void mic_probe() {
-
-    if (!mic.start_capture(mic_level)) {
-        LOG("mic: probe rejected");
-        return;
-    }
-
-    chThdSleepMilliseconds(mic_probe_ms);
-    mic.stop_capture();
-
-    LOG("mic: %u blocks in %ums (expected %u), dc %u, peak %u, rms %u, error 0x%08x", (unsigned) mic_blocks,
-        (unsigned) mic_probe_ms, (unsigned) (mic_probe_ms * pika::audio::SampleClock::rate / 1000U / 256U),
-        (unsigned) mic_dc, (unsigned) mic_peak_max, (unsigned) mic_rms, (unsigned) mic.last_error());
-}
+/*
+ * A sound the UI has asked for.
+ *
+ * The UI cannot simply play it: the speaker and the microphone share one
+ * clock, so something has to stop the capture first, and a caller that did
+ * that from the UI thread would race the heartbeat restarting it. Recording
+ * the request and letting the heartbeat act on it makes the arbitration
+ * single threaded - the same shape the panel already uses for contrast.
+ */
+static volatile bool sound_requested;
 
 /* BTN_PWR is the polled one: it shares EXTI channel 10 with BTN_UP and the
    channel serves one port at a time, see board.h. */
@@ -133,11 +134,9 @@ static const pika::gnss::Ublox::Config gnss_cfg = {&BOARD_GNSS_SERIAL, BOARD_GNS
 
 static pika::gnss::Ublox gnss{gnss_cfg};
 
-/* The UI takes a plain function, so it needs to know nothing about players or
-   sound assets. */
-static void play_test_sound() {
-    if (!pcm_player.play(spk, pika::audio::meow)) { LOG("spk: meow rejected"); }
-}
+/* The UI takes a plain function, so it needs to know nothing about players,
+   sound assets, or who is holding the sample clock. */
+static void play_test_sound() { sound_requested = true; }
 
 /* The UI owns the panel below this; the title and beat counter above it stay
    this file's business. */
@@ -150,6 +149,82 @@ static pika::ui::Ui ui{ui_cfg};
 /* At file scope so it can be read out of RAM over SWD; a local would live in
    a register and have no symbol. */
 static volatile uint32_t flush_ms;
+
+/*
+ * The microphone level block, at the bottom of the panel below everything the
+ * UI draws: its home screen ends at the volume bar (y = 58) and its menu at
+ * the fourth row (y = 68), so this clears both.
+ */
+static constexpr int mic_text_y = 74;
+static constexpr int mic_bar_y = 84;
+static constexpr int mic_bar_x = 4;
+static constexpr int mic_bar_w = pika::lcd::ST75160::width - 8;
+static constexpr int mic_bar_h = 12;
+static constexpr int mic_bar_inset = 2;
+
+static_assert(mic_bar_y + mic_bar_h <= pika::lcd::ST75160::height, "mic bar runs off the bottom of the panel");
+static_assert(mic_text_y >= 70, "mic block overlaps the UI's fourth menu row");
+
+/*
+ * Full scale for the bar. Speech a hand's width from the microphone peaks
+ * around a tenth of full scale, so a bar scaled to 32767 would never leave the
+ * first pixel; this puts a normal voice near the top instead.
+ */
+static constexpr uint32_t mic_bar_full_scale = 4000U;
+
+/*
+ * Draws the level block. Called from the heartbeat, which owns the panel -
+ * the UI thread must not draw or send, for the reason ui.h gives.
+ *
+ * The peak is read once into a local because the DMA callback rewrites it
+ * every 8ms, and the text and the bar have to agree with each other.
+ */
+static void draw_mic() {
+
+    const uint32_t hold = mic_hold;
+    const uint32_t rms = mic_rms;
+
+    char line[24];
+    chsnprintf(line, sizeof line, mic.capturing() ? "mic rms %u pk %u" : "mic off", (unsigned) rms, (unsigned) hold);
+
+    lcd.rect(4, mic_text_y, pika::lcd::ST75160::width - 8, 8, false);
+    lcd.text(4, mic_text_y, line);
+
+    lcd.rect(mic_bar_x, mic_bar_y, mic_bar_w, mic_bar_h, false);
+    lcd.frame(mic_bar_x, mic_bar_y, mic_bar_w, mic_bar_h, true);
+
+    const int inner = mic_bar_w - 2 * mic_bar_inset;
+    uint32_t scaled = hold > mic_bar_full_scale ? mic_bar_full_scale : hold;
+    const int fill = (int) ((uint32_t) inner * scaled / mic_bar_full_scale);
+
+    if (fill > 0) {
+        lcd.rect(mic_bar_x + mic_bar_inset, mic_bar_y + mic_bar_inset, fill, mic_bar_h - 2 * mic_bar_inset, true);
+    }
+}
+
+/*
+ * Hands the sample clock between the speaker and the microphone.
+ *
+ * Only this thread does it, so there is no window where one has let go and the
+ * other has not yet claimed. The microphone runs whenever nothing else wants
+ * the clock, which is what keeps the level block live.
+ */
+static void serve_audio() {
+
+    if (sound_requested) {
+        sound_requested = false;
+
+        if (mic.capturing()) { mic.stop_capture(); }
+
+        if (!pcm_player.play(spk, pika::audio::meow)) { LOG("spk: meow rejected"); }
+        return;
+    }
+
+    if (mic_ready && !mic.capturing() && !spk.busy() && !mic.start_capture(mic_level)) {
+        LOG("mic: capture rejected, error 0x%08x", (unsigned) mic.last_error());
+        mic_ready = false;/* do not retry ten times a second */
+    }
+}
 
 /*
  * Formats a 1e-7 degree coordinate as plain decimal degrees. chprintf() has
@@ -275,6 +350,10 @@ static THD_FUNCTION(heartbeat, arg) {
     while (true) {
         const bool beat_due = (tick == 0);
 
+        /* Before the drawing below, so a capture starting this tick is already
+           reflected in the level block. */
+        serve_audio();
+
         /* Before the draw, never after, so a change arriving mid draw stays
            pending for the next tick. */
         const bool ui_moved = ui.take_dirty();
@@ -295,8 +374,17 @@ static THD_FUNCTION(heartbeat, arg) {
             lcd.text(4, 20, line);
         }
 
-        if (beat_due || ui_moved) {
+        /*
+         * A level meter that moved once a second would not read as a level
+         * meter, so while capturing the block is refreshed every other tick.
+         * A flush is 53ms of I2C, but the thread sleeps on the DMA for all of
+         * it, so 5Hz costs bus bandwidth rather than CPU.
+         */
+        const bool mic_due = mic.capturing() && (tick % 2U) == 0U;
+
+        if (beat_due || ui_moved || mic_due) {
             ui.draw();
+            draw_mic();
 
             systime_t start = chVTGetSystemTimeX();
             bool ok = lcd.flush();
@@ -391,10 +479,11 @@ int main() {
     bool spk_ok = spk.init();
     LOG("spk: init %s", spk_ok ? "ok" : "failed");
 
-    bool mic_ok = mic.init();
-    LOG("mic: init %s", mic_ok ? "ok" : "failed");
-
-    if (mic_ok) { mic_probe(); }
+    /* Nothing is captured here. The heartbeat starts the microphone once it is
+       running and hands the clock back whenever the speaker wants it, so boot
+       is not held up waiting for a preamp to settle. */
+    mic_ready = mic.init();
+    LOG("mic: init %s", mic_ready ? "ok" : "failed");
 
     chThdCreateStatic(waHeartbeat, sizeof(waHeartbeat), NORMALPRIO, heartbeat, nullptr);
 
