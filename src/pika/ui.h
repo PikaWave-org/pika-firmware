@@ -13,6 +13,8 @@
  *          select   leaves the value where it is
  *          back     the same - there is nothing to cancel, every change has
  *                   already been applied and seen
+ *   rec:   select   records for as long as it is held, see record_held()
+ *          back     returns to the menu
  *
  * Editing is a mode of the menu rather than a screen of its own: the rows stay
  * where they are and only the value's rendering changes, so the eye does not
@@ -56,6 +58,10 @@ public:
         int y;                              /**< Top of the area UI owns.     */
         pika::input::Buttons::Config buttons; /**< Wiring, from the board.    */
         void (*test_sound)();               /**< Menu item, null if none.     */
+
+        /**< The record screen's status line, null if none. Called from draw(),
+             so it runs on the panel's thread and may return a static buffer. */
+        const char *(*record_status)();
     };
 
     explicit Ui(const Config &cfg);
@@ -93,6 +99,26 @@ public:
      */
     bool take_contrast(uint16_t &vop);
 
+    /**
+     * @brief   True while the user is holding the control that records.
+     * @note    An intent rather than a pad, like action_of()'s mapping: which
+     *          button it is stays this class's business. Polled rather than
+     *          delivered, because the Buttons driver broadcasts presses only -
+     *          there is no release event and no long press to wait on, so the
+     *          caller has to ask on whatever tick it already has.
+     * @note    Not const: the first release after the screen opens is a state
+     *          change, see the gate in the implementation.
+     */
+    [[nodiscard]] bool record_held();
+
+    /**
+     * @brief   The first panel row below what the current screen occupies.
+     * @note    For a caller drawing under the UI: it says whether there is
+     *          still room, so adding a menu row moves this rather than
+     *          silently overwriting whatever was below.
+     */
+    [[nodiscard]] int bottom_y() const;
+
 private:
 
     /* 20 steps, so the display moves in 5% increments. */
@@ -121,7 +147,7 @@ private:
        would make the menu disagree with the panel until the first press. */
     static constexpr uint8_t contrast_initial = 5U;
 
-    enum class Screen : uint8_t { home, menu };
+    enum class Screen : uint8_t { home, menu, record };
 
     /* What a press means, rather than which pad it came from. */
     enum class Action : uint8_t { none, up, down, select, back };
@@ -140,6 +166,7 @@ private:
 
     void draw_home();
     void draw_menu();
+    void draw_record();
 
     Config cfg_;
     pika::input::Buttons buttons_;
@@ -152,6 +179,7 @@ private:
     volatile uint8_t contrast_step_;
     volatile bool contrast_pending_;
     volatile bool editing_;
+    volatile bool record_gate_;
 };
 
 }  // namespace pika::ui

@@ -19,7 +19,7 @@ constexpr int bar_inset = 2;
 constexpr int label_x = 16;
 constexpr int value_x = label_x + 8 * 11;
 
-enum class ItemId : uint8_t { backlight, contrast, test_sound, back };
+enum class ItemId : uint8_t { backlight, contrast, test_sound, record, back };
 
 struct Item {
     const char *label;
@@ -31,6 +31,7 @@ constexpr Item menu[] = {
         {"Backlight", ItemId::backlight},
         {"Contrast", ItemId::contrast},
         {"Test sound", ItemId::test_sound},
+        {"Record", ItemId::record},
         {"Back", ItemId::back},
 };
 
@@ -41,7 +42,7 @@ constexpr size_t menu_count = sizeof menu / sizeof menu[0];
 Ui::Ui(const Config &cfg)
         : cfg_(cfg), buttons_(cfg.buttons), dirty_(true), volume_step_(volume_initial),
           screen_(Screen::home), cursor_(0U), backlight_(true), contrast_step_(contrast_initial),
-          contrast_pending_(false), editing_(false) {}
+          contrast_pending_(false), editing_(false), record_gate_(false) {}
 
 void Ui::init() {
     buttons_.init();
@@ -158,6 +159,11 @@ void Ui::activate() {
         if (cfg_.test_sound != nullptr) { cfg_.test_sound(); }
         break;
 
+    case ItemId::record:
+        screen_ = Screen::record;
+        record_gate_ = false;
+        break;
+
     case ItemId::back:
         screen_ = Screen::home;
         break;
@@ -187,6 +193,19 @@ void Ui::handle(Action a) {
 
         default:
             break;
+        }
+
+        return;
+    }
+
+    /* The record screen is held rather than pressed, so the only press it acts
+       on is the one that leaves. The press that begins a hold arrives here too
+       and must do nothing: a screen that moved out from under the finger would
+       stop the recording it just started. */
+    if (screen_ == Screen::record) {
+        if (a == Action::back) {
+            screen_ = Screen::menu;
+            dirty_ = true;
         }
 
         return;
@@ -246,6 +265,52 @@ void Ui::handle(Action a) {
 
     default:
         break;
+    }
+}
+
+/*
+ * The recording control, as an intent: the caller asks whether to record, not
+ * which pad is down.
+ *
+ * It is the select pad, and only on the record screen - the same pad means
+ * "activate" everywhere else, so a hold there must not start a recording.
+ * Leaving the screen therefore ends one in progress, which is the only cancel
+ * this needs.
+ */
+bool Ui::record_held() {
+    if (screen_ != Screen::record) { return false; }
+
+    const bool down = buttons_.pressed(pika::input::Button::right);
+
+    /* The press that opened this screen is the same pad, and on a real finger
+       it is still down when the screen appears - so it has to come up once
+       before a hold counts. Without the gate, arriving here records for
+       however long the finger stayed on the button and then replays it, which
+       is a recording nobody asked for. Measured on the board: 160ms. */
+    if (!record_gate_) {
+        record_gate_ = !down;
+        return false;
+    }
+
+    return down;
+}
+
+/*
+ * Where the current screen ends, so whoever draws below can tell whether there
+ * is room left. The menu is the one that grows: it is measured from the table
+ * rather than from a number written down twice, so a new row pushes this down
+ * and the caller notices instead of being quietly overdrawn.
+ */
+int Ui::bottom_y() const {
+    switch (screen_) {
+    case Screen::home:
+        return cfg_.y + row_h + 4 + bar_h;
+
+    case Screen::record:
+        return cfg_.y + 2 * row_h;
+
+    default:
+        return cfg_.y + (int) menu_count * row_h;
     }
 }
 
@@ -323,15 +388,32 @@ void Ui::draw_menu() {
     }
 }
 
+/* Two rows and nothing else: the level while recording is the meter block the
+   caller draws below this, which stays live for as long as the button is held
+   because the capture never stops to record. */
+void Ui::draw_record() {
+    cfg_.lcd->text(4, cfg_.y, "hold RIGHT to rec");
+
+    if (cfg_.record_status != nullptr) { cfg_.lcd->text(4, cfg_.y + row_h, cfg_.record_status()); }
+}
+
 void Ui::draw() {
     /* The UI owns everything from cfg_.y down, and clearing all of it is
        simpler than tracking which fields shrank since the last draw. */
     cfg_.lcd->rect(0, cfg_.y, pika::lcd::ST75160::width, pika::lcd::ST75160::height - cfg_.y, false);
 
-    if (screen_ == Screen::home) {
+    switch (screen_) {
+    case Screen::home:
         draw_home();
-    } else {
+        break;
+
+    case Screen::record:
+        draw_record();
+        break;
+
+    default:
         draw_menu();
+        break;
     }
 }
 

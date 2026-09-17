@@ -3,12 +3,14 @@
 
 #include "chprintf.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include <pika/audio/ADCMicrophone.h>
 #include <pika/audio/DACSpeaker.h>
 #include <pika/audio/PCMPlayer.h>
 #include <pika/audio/sounds/meow.h>
+#include <pika/audio/tone_generator.h>
 #include <pika/buttons.h>
 #include <pika/log.h>
 #include <pika/lcd/ST75160.h>
@@ -36,6 +38,20 @@ static const pika::audio::DACSpeaker::Config spk_cfg = {&BOARD_SPK_DAC, &sample_
 static pika::audio::DACSpeaker spk{spk_cfg};
 static pika::audio::PCMPlayer pcm_player;
 
+/*
+ * The replay has a player of its own rather than sharing pcm_player, and the
+ * beeps a generator at file scope rather than a local.
+ *
+ * Both drivers keep a pointer to the source for the length of the stream, so a
+ * local would be gone before the first refill. And both play() and tone() set
+ * up their source before the sink's busy check rejects them, so a second call
+ * on the same object repoints the clip the DMA is already reading: with one
+ * shared player, a "Test sound" press during a replay would switch the running
+ * stream over to the meow rather than being refused.
+ */
+static pika::audio::PCMPlayer rec_player;
+static pika::audio::ToneGenerator tone_gen;
+
 /* The microphone, on the same clock. */
 static const pika::audio::ADCMicrophone::Config mic_cfg = {&BOARD_MIC_ADC, &sample_clock, LINE_MIC_SHDN,
                                                            BOARD_MIC_ADC_CHANNEL, BOARD_MIC_SETTLE_MS};
@@ -58,6 +74,28 @@ uint32_t mic_peak;     /* Largest magnitude in the last block.              */
 uint32_t mic_rms;      /* RMS of the last block.                            */
 uint32_t mic_peak_max; /* Largest magnitude since the capture started.      */
 uint32_t mic_hold;     /* Peak with a decay, which is what the bar shows.   */
+
+/*
+ * The recording, and the flags the capture callback and the heartbeat pass
+ * between them. Four seconds is 256000 bytes: .data and .bss end under 15K
+ * into the 320K of AXI SRAM, so this leaves about 55K, and nothing in this
+ * tree allocates from the heap that occupies the rest. It is by far the
+ * largest object on the board - if something later needs room, this constant
+ * is the first thing to shrink and it is one line.
+ *
+ * Plain .bss, deliberately not DMA_BUF/.nocache like every other audio buffer
+ * here: no DMA controller ever sees it. The ADC's DMA fills the driver's own
+ * buffer, this is filled by a CPU copy in the capture callback and drained by
+ * a CPU copy in the playback callback, so the D-cache is coherent with itself
+ * and needs no MPU window. It would not fit in the 16K .nocache region anyway.
+ */
+constexpr uint32_t record_capacity = 4U * pika::audio::SampleClock::rate;
+
+int16_t record_buf[record_capacity];
+
+uint32_t volatile record_len; /* Samples recorded; written in the DMA IRQ.  */
+bool volatile record_arm;     /* The heartbeat asking the IRQ to append.    */
+bool volatile record_full;    /* The IRQ reached the end of the buffer.     */
 
 class MicLevel : public pika::audio::AudioConsumer {
 public:
@@ -94,6 +132,27 @@ public:
 
         mic_dc = mic.dc_level();
         mic_blocks++;
+
+        /*
+         * Recording is a flag on the meter rather than a consumer of its own.
+         * The capture is already running to drive the bar, so arming this
+         * starts recording on the next 8ms block; swapping the consumer would
+         * mean stopping the converter, waking the preamp again and losing
+         * 20ms and the DC tracker's convergence to it, and the meter would go
+         * dead exactly while the user is watching it to judge their level.
+         * The trade is that this one callback now does two jobs.
+         *
+         * The end of the buffer is handled here because stop_capture() cannot
+         * be called from an interrupt; the heartbeat reads record_full.
+         */
+        if (record_arm && !record_full) {
+            const size_t n = std::min(buf.size(), (size_t) (record_capacity - record_len));
+
+            std::copy_n(buf.begin(), n, &record_buf[record_len]);
+            record_len += n;
+
+            if (n < buf.size()) { record_full = true; }
+        }
     }
 };
 
@@ -115,6 +174,86 @@ static bool mic_ready;
  * single threaded - the same shape the panel already uses for contrast.
  */
 static volatile bool sound_requested;
+
+/* The heartbeat's tick, up here because the recorder counts in them. */
+static constexpr unsigned heartbeat_tick_ms = 100;
+
+/*
+ * The pause between the button coming up and the replay starting.
+ *
+ * It is what the feature asks for, and it is also what makes handing the
+ * buffer to the player safe: an interrupt already past the arm check when the
+ * heartbeat clears it appends one more block, and a second is 125 blocks of
+ * margin on that. Anyone shortening this should know it is not only cosmetic.
+ */
+static constexpr unsigned replay_delay_ticks = 1000U / heartbeat_tick_ms;
+
+/* The markers around the replay: an octave apart so which one you are hearing
+   takes no thought, and the closing one longer because an ending reads better
+   as a longer note. */
+static constexpr float beep_in_hz = 800.0f;
+static constexpr float beep_in_s = 0.1f;
+static constexpr float beep_out_hz = 400.0f;
+static constexpr float beep_out_s = 0.2f;
+static constexpr float beep_gain = 0.3f;
+
+/*
+ * The record-and-replay sequence, stepped once per heartbeat tick.
+ *
+ * It lives on that thread because serve_audio() is the sole arbitrator of the
+ * sample clock, and a second thread sequencing beeps with plain sleeps would
+ * be exactly the race that arrangement exists to prevent. The states are the
+ * waits: nothing here blocks, so the panel and the meter keep running through
+ * a recording and a replay.
+ *
+ * These two are plain where everything around them is volatile, because only
+ * the heartbeat ever touches them.
+ */
+enum class Rec : uint8_t { idle, recording, waiting, beep_in, replay, beep_out };
+
+static Rec rec_state;
+static unsigned rec_ticks;
+
+/* Volume to put back after the replay, see serve_record(). */
+static float rec_volume;
+
+/* Tenths of a second of recording, for the screen. */
+static unsigned record_tenths() { return (unsigned) (record_len / (pika::audio::SampleClock::rate / 10U)); }
+
+/*
+ * The record screen's second row. Called from the UI's draw(), which runs on
+ * the heartbeat, so this reads rec_state from the thread that owns it and the
+ * static buffer cannot be overwritten under the caller.
+ */
+static const char *record_status() {
+
+    static char text[20];
+
+    if (!mic_ready) { return "no mic"; }
+
+    switch (rec_state) {
+        case Rec::recording:
+            chsnprintf(text, sizeof text, record_full ? "rec %u.%us FULL" : "rec %u.%us", record_tenths() / 10U,
+                       record_tenths() % 10U);
+            break;
+
+        case Rec::waiting:
+            chsnprintf(text, sizeof text, "replay in %u.%us", rec_ticks / 10U, rec_ticks % 10U);
+            break;
+
+        case Rec::idle:
+            if (record_len == 0U) { return "ready"; }
+
+            chsnprintf(text, sizeof text, "last %u.%us", record_tenths() / 10U, record_tenths() % 10U);
+            break;
+
+        default:
+            chsnprintf(text, sizeof text, "replay %u.%us", record_tenths() / 10U, record_tenths() % 10U);
+            break;
+    }
+
+    return text;
+}
 
 /* BTN_PWR is the polled one: it shares EXTI channel 10 with BTN_UP and the
    channel serves one port at a time, see board.h. */
@@ -142,7 +281,7 @@ static void play_test_sound() { sound_requested = true; }
    this file's business. */
 static constexpr int ui_y = 30;
 
-static const pika::ui::Ui::Config ui_cfg = {&lcd, &spk, ui_y, btn_cfg, play_test_sound};
+static const pika::ui::Ui::Config ui_cfg = {&lcd, &spk, ui_y, btn_cfg, play_test_sound, record_status};
 
 static pika::ui::Ui ui{ui_cfg};
 
@@ -151,9 +290,11 @@ static pika::ui::Ui ui{ui_cfg};
 static volatile uint32_t flush_ms;
 
 /*
- * The microphone level block, at the bottom of the panel below everything the
- * UI draws: its home screen ends at the volume bar (y = 58) and its menu at
- * the fourth row (y = 68), so this clears both.
+ * The microphone level block, at the bottom of the panel below what the UI
+ * draws. Whether there is room for it depends on the screen - the menu is five
+ * rows now and reaches further down than this - so the heartbeat asks the UI
+ * where it ended rather than this making an assumption that a new menu row
+ * would quietly break.
  */
 static constexpr int mic_text_y = 74;
 static constexpr int mic_bar_y = 84;
@@ -163,7 +304,6 @@ static constexpr int mic_bar_h = 12;
 static constexpr int mic_bar_inset = 2;
 
 static_assert(mic_bar_y + mic_bar_h <= pika::lcd::ST75160::height, "mic bar runs off the bottom of the panel");
-static_assert(mic_text_y >= 70, "mic block overlaps the UI's fourth menu row");
 
 /*
  * The bottom of the dB scale, and the amplitude it stands for. Below that
@@ -234,6 +374,109 @@ static void draw_mic() {
 }
 
 /*
+ * Steps the record-and-replay sequence, and says whether it is using the audio
+ * path this tick.
+ *
+ * Every state that waits for a sound to finish waits on spk.busy() rather than
+ * on having started one, so a start the speaker refused costs a beep and not
+ * the sequence: the next tick finds the speaker idle and moves on. tone()
+ * cannot report a refusal at all, which is why that matters.
+ */
+static bool serve_record() {
+
+    switch (rec_state) {
+        case Rec::idle:
+            /* Nothing to record into if the microphone is not running - that is
+               the meow holding the clock, and the hold simply takes effect on
+               the first tick after it finishes. */
+            if (!ui.record_held() || !mic.capturing()) { return false; }
+
+            record_len = 0U;
+            record_full = false;
+            record_arm = true;
+            rec_state = Rec::recording;
+            LOG("rec: recording");
+            break;
+
+        case Rec::recording:
+            if (ui.record_held() && mic.capturing()) { break; }
+
+            record_arm = false;
+            LOG("rec: %u samples%s", (unsigned) record_len, record_full ? " (full)" : "");
+
+            if (record_len == 0U) {
+                rec_state = Rec::idle;
+                return false;
+            }
+
+            rec_ticks = replay_delay_ticks;
+            rec_state = Rec::waiting;
+            break;
+
+        case Rec::waiting:
+            /* The microphone keeps running through the pause, so the meter
+               stays live; it is handed over only when there is a sound to
+               make. */
+            if (rec_ticks > 0U) {
+                rec_ticks--;
+                break;
+            }
+
+            if (mic.capturing()) { mic.stop_capture(); }
+
+            /* The recording peaks far below full scale - speech reads around
+               -18dB on the meter - so playing it at the volume setting would
+               be inaudible and read as an empty buffer. It goes out at full
+               scale instead and the setting is put back at the end, which is a
+               replay deliberately louder than the volume control says. */
+            rec_volume = spk.volume();
+            spk.set_volume(1.0f);
+
+            tone_gen.tone(spk, beep_in_hz, beep_gain, beep_in_s);
+            rec_state = Rec::beep_in;
+            break;
+
+        case Rec::beep_in:
+            if (spk.busy()) { break; }
+
+            if (!rec_player.play(spk, {record_buf, record_len})) {
+                LOG("rec: replay rejected");
+                spk.set_volume(rec_volume);
+                rec_state = Rec::idle;
+                return false;
+            }
+
+            rec_state = Rec::replay;
+            break;
+
+        case Rec::replay:
+            if (spk.busy()) { break; }
+
+            /* The only view of an underrun there is from out here, and this
+               replay is four times longer than anything else this board
+               plays. */
+            if (spk.last_error() != 0U) { LOG("rec: speaker error 0x%08x", (unsigned) spk.last_error()); }
+
+            tone_gen.tone(spk, beep_out_hz, beep_gain, beep_out_s);
+            rec_state = Rec::beep_out;
+            break;
+
+        case Rec::beep_out:
+            if (spk.busy()) { break; }
+
+            spk.set_volume(rec_volume);
+            rec_state = Rec::idle;
+            LOG("rec: done");
+
+            /* Returns rather than breaking: the tail of serve_audio() restarts
+               the capture on this same tick. */
+            return false;
+    }
+
+    return true;
+}
+
+/*
  * Hands the sample clock between the speaker and the microphone.
  *
  * Only this thread does it, so there is no window where one has let go and the
@@ -241,6 +484,19 @@ static void draw_mic() {
  * the clock, which is what keeps the level block live.
  */
 static void serve_audio() {
+
+    /*
+     * The recorder holds the converters for as long as it is running, so it
+     * goes first and the rest of this is skipped while it says so. Without
+     * that, the tick between the beep ending and the replay starting would
+     * find the speaker idle and the microphone stopped, and the tail below
+     * would claim the clock for a capture that has to be torn down again -
+     * whereupon the next tone would be refused, silently.
+     *
+     * A test sound asked for mid sequence is left pending rather than dropped,
+     * so it plays once the replay is over.
+     */
+    if (serve_record()) { return; }
 
     if (sound_requested) {
         sound_requested = false;
@@ -366,7 +622,6 @@ static void log_mon_hw() {
  * The panel is flushed only here, so everything on it is drawn from this
  * thread.
  */
-static constexpr unsigned heartbeat_tick_ms = 100;
 static constexpr unsigned heartbeat_ticks_per_beat = 1000 / heartbeat_tick_ms;
 
 static THD_WORKING_AREA(waHeartbeat, 2048);
@@ -415,7 +670,10 @@ static THD_FUNCTION(heartbeat, arg) {
 
         if (beat_due || ui_moved || mic_due) {
             ui.draw();
-            draw_mic();
+
+            /* Only where the UI left room: its menu reaches past the top of
+               this block, and drawing anyway would erase the last row. */
+            if (ui.bottom_y() <= mic_text_y) { draw_mic(); }
 
             systime_t start = chVTGetSystemTimeX();
             bool ok = lcd.flush();
