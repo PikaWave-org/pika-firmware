@@ -112,9 +112,12 @@ function(pika_add_firmware name)
     # the first FP instruction.
     target_compile_definitions(${name}.elf PRIVATE CORTEX_USE_FPU=TRUE)
 
+    # No atexit registration for static objects with destructors: the firmware
+    # never exits, and without it the link wants a __dso_handle that nothing
+    # here (nosys, no crt0) provides.
     target_compile_options(${name}.elf PRIVATE
             ${MCU_COMPILE_FLAGS}
-            $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti -fno-exceptions -fno-threadsafe-statics>)
+            $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti -fno-exceptions -fno-threadsafe-statics -fno-use-cxa-atexit>)
 
     target_link_options(${name}.elf PRIVATE
             ${MCU_FLAGS}

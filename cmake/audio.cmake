@@ -21,7 +21,7 @@ set(GENERATED_SOUND_DIR "${GENERATED_SRC_ROOT}/pika/audio/sounds")
 # Adds the .cpp generated from SOUND to <target> and puts the generated tree
 # on its include path. NAME defaults to the file's stem and is the C++
 # identifier. Regenerates when the sound file or the script changes.
-function(pika_add_audio_sample target)
+function(pika_add_sound target)
     cmake_parse_arguments(SND "" "SOUND;NAME;RATE;FORMAT;NAMESPACE" "" ${ARGN})
 
     if (NOT EXISTS "${SND_SOUND}")

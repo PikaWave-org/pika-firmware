@@ -1,5 +1,7 @@
 #pragma once
 
+#include <pika/IntrusiveList.h>
+
 #include <cstdint>
 #include <span>
 
@@ -45,7 +47,7 @@ public:
  * short, but a recording has no natural end - the device decides when to stop,
  * because a button was released.
  */
-class AudioConsumer {
+class AudioConsumer : public IntrusiveListItem<AudioConsumer> {
 public:
     /**
      * @brief   Takes the next captured samples, signed 16 bit at full scale.

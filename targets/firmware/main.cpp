@@ -8,6 +8,7 @@
 
 #include <pika/audio/ADCMicrophone.h>
 #include <pika/audio/DACSpeaker.h>
+#include <pika/audio/MicLevel.h>
 #include <pika/audio/PCMPlayer.h>
 #include <pika/audio/sounds/meow.h>
 #include <pika/audio/tone_generator.h>
@@ -25,55 +26,25 @@ static const pika::lcd::ST75160::Config lcd_cfg = {&BOARD_LCD_I2C,       BOARD_L
 static pika::lcd::ST75160 lcd{lcd_cfg};
 
 /*
- * The 32kHz sample clock, shared by the speaker and the microphone. They never
- * run together - the device either talks or listens - and the clock is what
- * makes that exclusive rather than merely intended.
+ * The 32kHz sample clock, shared by the speaker and the microphone.
  */
 static pika::audio::SampleClock sample_clock{&BOARD_SAMPLE_TIMER};
 
-/* The speaker, likewise. */
 static const pika::audio::DACSpeaker::Config spk_cfg = {&BOARD_SPK_DAC, &sample_clock, LINE_SPK_EN,
                                                         BOARD_SPK_SETTLE_MS};
-
 static pika::audio::DACSpeaker spk{spk_cfg};
-static pika::audio::PCMPlayer pcm_player;
 
-/*
- * The replay has a player of its own rather than sharing pcm_player, and the
- * beeps a generator at file scope rather than a local.
- *
- * Both drivers keep a pointer to the source for the length of the stream, so a
- * local would be gone before the first refill. And both play() and tone() set
- * up their source before the sink's busy check rejects them, so a second call
- * on the same object repoints the clip the DMA is already reading: with one
- * shared player, a "Test sound" press during a replay would switch the running
- * stream over to the meow rather than being refused.
- */
-static pika::audio::PCMPlayer rec_player;
-static pika::audio::ToneGenerator tone_gen;
-
-/* The microphone, on the same clock. */
 static const pika::audio::ADCMicrophone::Config mic_cfg = {&BOARD_MIC_ADC, &sample_clock, LINE_MIC_SHDN,
                                                            BOARD_MIC_ADC_CHANNEL, BOARD_MIC_SETTLE_MS};
-
 static pika::audio::ADCMicrophone mic{mic_cfg};
 
-/*
- * Bring-up instrumentation for the microphone, and nothing more: it measures
- * each 8ms block and throws it away.
- *
- * The counters are deliberately non-static globals so that they can be read
- * out of RAM over SWD by name. That is not a stylistic choice - the panel's
- * flush wedges the heartbeat thread a few seconds after boot, so anything
- * logged after that is never seen, and a debugger is the only way to watch
- * this run for longer than the debug UART survives.
- */
-uint32_t mic_blocks;   /* 8ms blocks captured, ~125 a second while running. */
-uint32_t mic_dc;       /* The driver's DC estimate, in raw ADC codes.       */
-uint32_t mic_peak;     /* Largest magnitude in the last block.              */
-uint32_t mic_rms;      /* RMS of the last block.                            */
-uint32_t mic_peak_max; /* Largest magnitude since the capture started.      */
-uint32_t mic_hold;     /* Peak with a decay, which is what the bar shows.   */
+static pika::audio::PCMPlayer pcm_player;
+static pika::audio::ToneGenerator tone_gen;
+
+/* A second player for the replay: play() repoints its clip before the sink's
+   busy check, so one shared with the test sound would switch a running replay
+   over to the meow rather than refuse it. */
+static pika::audio::PCMPlayer rec_player;
 
 /*
  * The recording, and the flags the capture callback and the heartbeat pass
@@ -97,72 +68,35 @@ uint32_t volatile record_len; /* Samples recorded; written in the DMA IRQ.  */
 bool volatile record_arm;     /* The heartbeat asking the IRQ to append.    */
 bool volatile record_full;    /* The IRQ reached the end of the buffer.     */
 
-class MicLevel : public pika::audio::AudioConsumer {
+/*
+ * Appends captured blocks to the recording while armed. It sits behind the
+ * level meter, which keeps running through a recording, so arming starts on
+ * the next 8ms block without the capture being touched.
+ *
+ * The end of the buffer is handled here because stop_capture() cannot be
+ * called from an interrupt; the heartbeat reads record_full.
+ */
+class Recorder : public pika::audio::AudioConsumer {
 public:
-    /* Runs in the DMA interrupt: arithmetic only, no logging and no blocking.
-       The sum needs 64 bits - 256 squares of up to 32768 overflow 32. */
+    /* Runs in the DMA interrupt: a copy and nothing else. */
     void take_audio_buffer(std::span<const int16_t> buf) override {
-
-        uint32_t peak = 0;
-        uint64_t sum = 0;
-
-        for (int16_t s: buf) {
-            const uint32_t mag = (uint32_t) (s < 0 ? -(int32_t) s : (int32_t) s);
-
-            if (mag > peak) {
-                peak = mag;
-            }
-            sum += (uint64_t) mag * mag;
+        if (record_full) {
+            return;
         }
 
-        mic_peak = peak;
-        mic_rms = buf.empty() ? 0U : (uint32_t) sqrtf((float) (sum / buf.size()));
+        const size_t n = std::min(buf.size(), (size_t) (record_capacity - record_len));
 
-        if (peak > mic_peak_max) {
-            mic_peak_max = peak;
-        }
+        std::copy_n(buf.begin(), n, &record_buf[record_len]);
+        record_len += n;
 
-        /*
-         * Peak hold, rising instantly and falling about 3% a block. The panel
-         * is redrawn at 5Hz against 125 blocks a second, so the bare peak of
-         * whichever 8ms block the draw happened to land on is noise; this
-         * gives the bar a quarter second of memory and makes it readable.
-         */
-        if (peak > mic_hold) {
-            mic_hold = peak;
-        } else {
-            mic_hold -= mic_hold >> 5;
-        }
-
-        mic_dc = mic.dc_level();
-        mic_blocks++;
-
-        /*
-         * Recording is a flag on the meter rather than a consumer of its own.
-         * The capture is already running to drive the bar, so arming this
-         * starts recording on the next 8ms block; swapping the consumer would
-         * mean stopping the converter, waking the preamp again and losing
-         * 20ms and the DC tracker's convergence to it, and the meter would go
-         * dead exactly while the user is watching it to judge their level.
-         * The trade is that this one callback now does two jobs.
-         *
-         * The end of the buffer is handled here because stop_capture() cannot
-         * be called from an interrupt; the heartbeat reads record_full.
-         */
-        if (record_arm && !record_full) {
-            const size_t n = std::min(buf.size(), (size_t) (record_capacity - record_len));
-
-            std::copy_n(buf.begin(), n, &record_buf[record_len]);
-            record_len += n;
-
-            if (n < buf.size()) {
-                record_full = true;
-            }
+        if (n < buf.size()) {
+            record_full = true;
         }
     }
 };
 
-static MicLevel mic_level;
+static Recorder recorder;
+static pika::audio::MicLevel mic_level;
 
 /*
  * True once mic.init() has succeeded, so the heartbeat knows there is a
@@ -316,28 +250,6 @@ static constexpr int mic_bar_inset = 2;
 static_assert(mic_bar_y + mic_bar_h <= pika::lcd::ST75160::height, "mic bar runs off the bottom of the panel");
 
 /*
- * The bottom of the dB scale, and the amplitude it stands for. Below that
- * amplitude - which includes zero, whose logarithm is minus infinity and
- * converts to nothing sensible - a reading is just the floor.
- *
- * GCC folds __builtin_powf over constants, so the threshold follows the floor
- * at compile time instead of being a second number to keep in step with it.
- */
-static constexpr float db_floor = -100.0f;
-static constexpr float db_floor_mag = __builtin_powf(10.0f, db_floor / 20.0f);
-
-/* An amplitude as dB, where 1.0 is 0dB and so the readings are negative. */
-static float to_db(float mag) {
-
-    const float db = mag > db_floor_mag ? 20.0f * log10f(mag) : db_floor;
-
-    return db > 0.0f ? 0.0f : db;
-}
-
-/* The level counters are magnitudes of signed 16 bit samples. */
-static constexpr float mic_full_scale = 32767.0f;
-
-/*
  * The bottom of the meter, which is not the bottom of the scale: one ADC code
  * is -66dB here, quieter than the front end can resolve, so -70dB leaves a
  * quiet room's rms of 20 to 40 codes just off the end and speech a hand's
@@ -350,24 +262,18 @@ static constexpr float mic_meter_db = -70.0f;
  * Draws the level block. Called from the heartbeat, which owns the panel -
  * the UI thread must not draw or send, for the reason ui.h gives.
  *
- * The peak is read once into a local because the DMA callback rewrites it
- * every 8ms, and the text and the bar have to agree with each other. The
- * capture callback keeps recording plain magnitudes: the logarithms are two a
- * redraw here against 125 blocks a second in the interrupt, and a linear peak
- * hold is what decays by a shift.
+ * The readings are taken once into locals because the DMA callback rewrites
+ * them every 8ms, and the text and the bar have to agree with each other.
  */
 static void draw_mic() {
 
-    const float hold_db = fmaxf(to_db((float) mic_hold / mic_full_scale), mic_meter_db);
-    const float rms_db = fmaxf(to_db((float) mic_rms / mic_full_scale), mic_meter_db);
+    const float peak_db = fmaxf(mic_level.peak_db(), mic_meter_db);
 
-    /* chprintf has no floating point, and whole dB is as fine as this reads
-       anyway. No space before the numbers: they carry their own sign, and the
-       widest line this can produce is 19 characters, which is the whole width
-       of the panel in the 8x8 font. */
+    /* Whole dB is as fine as this reads. No space before the numbers: they
+       carry their own sign, and the widest line this can produce is 19
+       characters, which is the whole width of the panel in the 8x8 font. */
     char line[24];
-    chsnprintf(line, sizeof line, mic.capturing() ? "mic rms%d pk%d dB" : "mic off", (int) lrintf(rms_db),
-               (int) lrintf(hold_db));
+    chsnprintf(line, sizeof line, mic.capturing() ? "mic %.1f dB" : "mic off", peak_db);
 
     lcd.rect(4, mic_text_y, pika::lcd::ST75160::width - 8, 8, false);
     lcd.text(4, mic_text_y, line);
@@ -376,7 +282,7 @@ static void draw_mic() {
     lcd.frame(mic_bar_x, mic_bar_y, mic_bar_w, mic_bar_h, true);
 
     const int inner = mic_bar_w - 2 * mic_bar_inset;
-    const int fill = (int) ((float) inner * (hold_db - mic_meter_db) / -mic_meter_db);
+    const int fill = (int) ((float) inner * (peak_db - mic_meter_db) / -mic_meter_db);
 
     if (fill > 0) {
         lcd.rect(mic_bar_x + mic_bar_inset, mic_bar_y + mic_bar_inset, fill, mic_bar_h - 2 * mic_bar_inset, true);
@@ -500,26 +406,7 @@ static bool serve_record() {
     return true;
 }
 
-/*
- * Hands the sample clock between the speaker and the microphone.
- *
- * Only this thread does it, so there is no window where one has let go and the
- * other has not yet claimed. The microphone runs whenever nothing else wants
- * the clock, which is what keeps the level block live.
- */
 static void serve_audio() {
-
-    /*
-     * The recorder holds the converters for as long as it is running, so it
-     * goes first and the rest of this is skipped while it says so. Without
-     * that, the tick between the beep ending and the replay starting would
-     * find the speaker idle and the microphone stopped, and the tail below
-     * would claim the clock for a capture that has to be torn down again -
-     * whereupon the next tone would be refused, silently.
-     *
-     * A test sound asked for mid sequence is left pending rather than dropped,
-     * so it plays once the replay is over.
-     */
     if (serve_record()) {
         return;
     }
@@ -537,16 +424,17 @@ static void serve_audio() {
         return;
     }
 
-    if (mic_ready && !mic.capturing() && !spk.busy() && !mic.start_capture(mic_level)) {
+    if (mic_ready && !mic.capturing() && !spk.busy() && !mic.start_capture()) {
         LOG("mic: capture rejected, error 0x%08x", (unsigned) mic.last_error());
         mic_ready = false; /* do not retry ten times a second */
     }
 }
 
 /*
- * Formats a 1e-7 degree coordinate as plain decimal degrees. chprintf() has
- * no floating point support in this build, and the sign has to be taken off
- * before the split so that -0.5 degrees does not come out as "-0.-5000000".
+ * Formats a 1e-7 degree coordinate as plain decimal degrees. Done in integers
+ * because a float carries seven significant digits and this needs ten, and the
+ * sign has to be taken off before the split so that -0.5 degrees does not come
+ * out as "-0.-5000000".
  */
 static void format_deg(char *out, size_t len, int32_t deg_1e7) {
 
@@ -739,21 +627,6 @@ static THD_FUNCTION(gnss_reader, arg) {
     gnss.run();
 }
 
-/*
- * Reporting gets its own thread rather than riding the heartbeat.
- *
- * The heartbeat thread blocks forever in lcd.flush() within a few beats on
- * most boots - see memory/lcd-flush-hangs-after-few-beats.md - so logging
- * from there took the receiver's measurements down with the panel, and a
- * capture that stopped could not be read as either the LCD hanging or the
- * link dying. Here nothing the panel does can starve it.
- *
- * Polling the accessors, rather than logging from the driver's message
- * handler, is what keeps a dead link visible: if no message ever arrives this
- * still prints a line a second with frames() and errors() standing still,
- * which is the signature of a link that has stopped. Logging on arrival would
- * simply go quiet, which is the same ambiguity in a different place.
- */
 static THD_WORKING_AREA(waGnssLog, 2048);
 
 static THD_FUNCTION(gnss_logger, arg) {
@@ -805,6 +678,8 @@ int main() {
     /* Nothing is captured here. The heartbeat starts the microphone once it is
        running and hands the clock back whenever the speaker wants it, so boot
        is not held up waiting for a preamp to settle. */
+    mic.add_consumer(mic_level);
+    mic.add_consumer(recorder);
     mic_ready = mic.init();
     LOG("mic: init %s", mic_ready ? "ok" : "failed");
 

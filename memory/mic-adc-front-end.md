@@ -12,9 +12,10 @@ from anything in this tree - ChibiOS carries no pin-to-channel map and no H7
 EXTSEL table, and its only H7 ADC example has the trigger line commented out.
 
 - **PA6 is ADC1_INP3**, so `pcsel` is `ADC_SELMASK_IN3` and the sequence entry
-  is `ADC_SQR1_SQ1_N(ADC_CHANNEL_IN3)`. Confirmed by the DC level: with the
-  preamp powered the input sits at **2041-2042 codes** against a mid scale of
-  2048. A wrong channel parks it at an end of the range instead.
+  is `ADC_SQR1_SQ1_N(ADC_CHANNEL_IN3)`. Confirmed from the raw samples: with
+  the preamp powered the input sits at **2041-2042 codes** against a mid scale
+  of 2048, which is why the driver simply subtracts mid scale and no longer
+  tracks the bias. A wrong channel parks it at an end of the range instead.
 - **EXTSEL 13 is TIM6_TRGO for ADC1/2**, from RM0468. Confirmed by rate: a 2s
   capture produced exactly 250 blocks of 256 samples, which is 32000 samples a
   second to the block. This is *not* the number the DAC uses for the same
@@ -26,8 +27,8 @@ EXTSEL table, and its only H7 ADC example has the trigger line commented out.
   `LINE_MIC_EN`, which said the opposite of what the pin does.
 - A quiet room reads **rms around 20-40 and peak around 50-120** in signed 16
   bit full scale, i.e. one to four ADC codes of noise. Nonzero and *varying* is
-  the thing to check: a DMA that moved nothing would give a constant, and a
-  constant reads as rms 0 once the DC tracker has caught up.
+  the thing to check: a DMA that moved nothing would give a constant, which
+  reads as a fixed rms and a peak hold that never moves.
 
 **`STM32_ADC_ADC3_CLOCK_MODE` must be set in mcuconf.h even though this part
 has no ADC3.** `STM32_HAS_ADC3` is FALSE and `STM32_ADC_USE_ADC3` defaults

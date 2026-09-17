@@ -149,7 +149,7 @@
 /*
  * How long to wait after the preamp wakes up before its samples mean anything.
  * The output has to charge its coupling capacitor up to the bias point, and
- * converting through that ramp just feeds the DC tracker a sweep.
+ * converting through that ramp records it as a thump.
  */
 #define BOARD_MIC_SETTLE_MS         20U
 
