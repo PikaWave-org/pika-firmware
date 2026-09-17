@@ -166,26 +166,58 @@ static_assert(mic_bar_y + mic_bar_h <= pika::lcd::ST75160::height, "mic bar runs
 static_assert(mic_text_y >= 70, "mic block overlaps the UI's fourth menu row");
 
 /*
- * Full scale for the bar. Speech a hand's width from the microphone peaks
- * around a tenth of full scale, so a bar scaled to 32767 would never leave the
- * first pixel; this puts a normal voice near the top instead.
+ * The bottom of the dB scale, and the amplitude it stands for. Below that
+ * amplitude - which includes zero, whose logarithm is minus infinity and
+ * converts to nothing sensible - a reading is just the floor.
+ *
+ * GCC folds __builtin_powf over constants, so the threshold follows the floor
+ * at compile time instead of being a second number to keep in step with it.
  */
-static constexpr uint32_t mic_bar_full_scale = 4000U;
+static constexpr float db_floor = -100.0f;
+static constexpr float db_floor_mag = __builtin_powf(10.0f, db_floor / 20.0f);
+
+/* An amplitude as dB, where 1.0 is 0dB and so the readings are negative. */
+static float to_db(float mag) {
+
+    const float db = mag > db_floor_mag ? 20.0f * log10f(mag) : db_floor;
+
+    return db > 0.0f ? 0.0f : db;
+}
+
+/* The level counters are magnitudes of signed 16 bit samples. */
+static constexpr float mic_full_scale = 32767.0f;
+
+/*
+ * The bottom of the meter, which is not the bottom of the scale: one ADC code
+ * is -66dB here, quieter than the front end can resolve, so -70dB leaves a
+ * quiet room's rms of 20 to 40 codes just off the end and speech a hand's
+ * width away, peaking near -18dB, three quarters along. Both the bar and the
+ * number bottom out here, and two digits is also all the line has room for.
+ */
+static constexpr float mic_meter_db = -70.0f;
 
 /*
  * Draws the level block. Called from the heartbeat, which owns the panel -
  * the UI thread must not draw or send, for the reason ui.h gives.
  *
  * The peak is read once into a local because the DMA callback rewrites it
- * every 8ms, and the text and the bar have to agree with each other.
+ * every 8ms, and the text and the bar have to agree with each other. The
+ * capture callback keeps recording plain magnitudes: the logarithms are two a
+ * redraw here against 125 blocks a second in the interrupt, and a linear peak
+ * hold is what decays by a shift.
  */
 static void draw_mic() {
 
-    const uint32_t hold = mic_hold;
-    const uint32_t rms = mic_rms;
+    const float hold_db = fmaxf(to_db((float) mic_hold / mic_full_scale), mic_meter_db);
+    const float rms_db = fmaxf(to_db((float) mic_rms / mic_full_scale), mic_meter_db);
 
+    /* chprintf has no floating point, and whole dB is as fine as this reads
+       anyway. No space before the numbers: they carry their own sign, and the
+       widest line this can produce is 19 characters, which is the whole width
+       of the panel in the 8x8 font. */
     char line[24];
-    chsnprintf(line, sizeof line, mic.capturing() ? "mic rms %u pk %u" : "mic off", (unsigned) rms, (unsigned) hold);
+    chsnprintf(line, sizeof line, mic.capturing() ? "mic rms%d pk%d dB" : "mic off", (int) lrintf(rms_db),
+               (int) lrintf(hold_db));
 
     lcd.rect(4, mic_text_y, pika::lcd::ST75160::width - 8, 8, false);
     lcd.text(4, mic_text_y, line);
@@ -194,8 +226,7 @@ static void draw_mic() {
     lcd.frame(mic_bar_x, mic_bar_y, mic_bar_w, mic_bar_h, true);
 
     const int inner = mic_bar_w - 2 * mic_bar_inset;
-    uint32_t scaled = hold > mic_bar_full_scale ? mic_bar_full_scale : hold;
-    const int fill = (int) ((uint32_t) inner * scaled / mic_bar_full_scale);
+    const int fill = (int) ((float) inner * (hold_db - mic_meter_db) / -mic_meter_db);
 
     if (fill > 0) {
         lcd.rect(mic_bar_x + mic_bar_inset, mic_bar_y + mic_bar_inset, fill, mic_bar_h - 2 * mic_bar_inset, true);
