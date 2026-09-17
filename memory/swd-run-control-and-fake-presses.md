@@ -30,6 +30,25 @@ gdb-multiarch -batch -nx build/targets/firmware/firmware.elf \
 returns "not supported by this target" and every memory access fails, which
 reads like a broken probe rather than a missing argument.
 
+**But there is no ARM gdb on this machine.** As of 2026-09-17 `gdb` is the
+x86-only build, and neither `gdb-multiarch` nor `arm-none-eabi-gdb` is
+installed - so the recipe above cannot be run here at all, and installing one
+is a question for whoever owns the machine. Use **`tools/swd.py`** instead: the
+GDB server speaks RSP on the port, and halt, go, sleep, read and write are a
+handful of packets, which that file implements along with starting the server
+itself. `tools/hw run -- tools/swd.py mic_blocks rec_state` prints symbols;
+import `Swd` for a scripted press sequence.
+
+Two things it knows that cost time to find out:
+
+- **A file-scope `static` is mangled.** `rec_state` is `_ZL9rec_state` in the
+  symbol table, so a plain name lookup misses exactly the variables a single
+  .cpp keeps to itself.
+- **A halt stops the CPU but not the converters.** Polling a state machine
+  every 250ms visibly stretched every phase being measured - a 1s pause read
+  as 2.1s and a 4s replay as 5.5s. Sample sparsely, at known wall times, and
+  do not halt at all during playback.
+
 **Faking a button press without fingers:** the buttons are active low with
 internal pull-ups, so switching a line's PUPDR from pull-up (01) to pull-down
 (10) drives it low exactly as a press would - a real edge for the EXTI lines,
