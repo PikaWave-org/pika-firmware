@@ -78,6 +78,15 @@ public:
     void frame(int x, int y, int w, int h, bool on);
 
     /**
+   * @brief   Draws a packed 1bpp image, as tools/bmp2cpp.py emits it.
+   * @param   bits  Rows top to bottom, each (w+7)/8 bytes, MSB leftmost.
+   * @note    Only set bits are drawn, the way text() draws a glyph: the
+   *          background is whatever was already there, so clear() first if
+   *          the image is meant to be opaque.
+   */
+    void bitmap(int x, int y, int w, int h, const uint8_t *bits, bool on = true);
+
+    /**
    * @brief   Draws a string in the 8x8 font, no wrapping.
    * @return  The x coordinate just past the last glyph.
    */

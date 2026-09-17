@@ -290,6 +290,19 @@ void ST75160::frame(int x, int y, int w, int h, bool on) {
     }
 }
 
+void ST75160::bitmap(int x, int y, int w, int h, const uint8_t *bits, bool on) {
+    const int stride = (w + 7) / 8;
+
+    for (int row = 0; row < h; row++) {
+        const uint8_t *line = &bits[(size_t) row * (size_t) stride];
+        for (int col = 0; col < w; col++) {
+            if (((line[col / 8] >> (7 - (col & 7))) & 1U) != 0U) {
+                pixel(x + col, y + row, on);
+            }
+        }
+    }
+}
+
 int ST75160::text(int x, int y, const char *s, bool on) {
     for (; *s != '\0'; s++) {
         char c = *s;

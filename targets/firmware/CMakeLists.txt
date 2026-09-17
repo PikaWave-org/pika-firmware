@@ -17,6 +17,9 @@ target_compile_definitions(firmware.elf PRIVATE CHPRINTF_USE_FLOAT=TRUE)
 # Sound effects, generated from sounds/ into the build tree at build time.
 pika_add_sound(firmware.elf SOUND "${PROJECT_ROOT}/sounds/meow.mp3")
 
+# Splash screen, generated from images/ into the build tree at build time.
+pika_add_image(firmware.elf IMAGE "${PROJECT_ROOT}/images/pika_logo.bmp")
+
 # MELPe 1200 bps speech codec. Nothing calls it yet, and --gc-sections keeps
 # the unreferenced objects out of the image, so this is free until it is used.
 target_link_libraries(firmware.elf PRIVATE melpe)

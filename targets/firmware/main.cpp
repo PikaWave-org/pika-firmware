@@ -14,6 +14,7 @@
 #include <pika/audio/tone_generator.h>
 #include <pika/buttons.h>
 #include <pika/lcd/ST75160.h>
+#include <pika/lcd/images/pika_logo.h>
 #include <pika/log.h>
 #include <pika/ublox.h>
 #include <pika/ui.h>
@@ -220,6 +221,13 @@ static pika::gnss::Ublox gnss{gnss_cfg};
 /* The UI takes a plain function, so it needs to know nothing about players,
    sound assets, or who is holding the sample clock. */
 static void play_test_sound() { sound_requested = true; }
+
+/* How long the logo stays up at boot, see main(). */
+static constexpr uint32_t splash_ms = 2000U;
+
+static_assert(pika::lcd::pika_logo_width <= pika::lcd::ST75160::width &&
+                      pika::lcd::pika_logo_height <= pika::lcd::ST75160::height,
+              "the splash image is larger than the panel");
 
 /* The UI owns the panel below this; the title and beat counter above it stay
    this file's business. */
@@ -662,9 +670,18 @@ int main() {
     bool ok = lcd.init();
     LOG("lcd: init %s, i2c error 0x%08x", ok ? "ok" : "failed", (unsigned) lcd.last_error());
 
+    /*
+     * The splash, which is exactly the size of the panel and so needs no
+     * placing. The two seconds it is up are not two seconds of waiting: the
+     * speaker and the microphone are brought up underneath it and only the
+     * remainder is slept away, so a boot that gets slower later eats into the
+     * splash rather than into the time to first beat.
+     */
+    systime_t splash_start = chVTGetSystemTimeX();
+
     if (ok) {
         lcd.clear();
-        lcd.text(4, 6, BOARD_NAME);
+        lcd.bitmap(0, 0, pika::lcd::pika_logo_width, pika::lcd::pika_logo_height, pika::lcd::pika_logo);
         if (!lcd.flush()) {
             LOG("lcd: flush failed, i2c error 0x%08x", (unsigned) lcd.last_error());
         }
@@ -682,6 +699,23 @@ int main() {
     mic.add_consumer(recorder);
     mic_ready = mic.init();
     LOG("mic: init %s", mic_ready ? "ok" : "failed");
+
+    /* What is left of the splash, then the screen the heartbeat writes into.
+       TIME_I2MS of the elapsed time rather than a deadline compare, so a tick
+       counter that wrapped between the two reads cannot leave this asleep for
+       a very long time. */
+    const uint32_t splash_shown_ms = (uint32_t) TIME_I2MS(chVTTimeElapsedSinceX(splash_start));
+    if (splash_shown_ms < splash_ms) {
+        chThdSleepMilliseconds(splash_ms - splash_shown_ms);
+    }
+
+    if (ok) {
+        lcd.clear();
+        lcd.text(4, 6, BOARD_NAME);
+        if (!lcd.flush()) {
+            LOG("lcd: flush failed, i2c error 0x%08x", (unsigned) lcd.last_error());
+        }
+    }
 
     chThdCreateStatic(waHeartbeat, sizeof(waHeartbeat), NORMALPRIO, heartbeat, nullptr);
 
