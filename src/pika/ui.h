@@ -119,6 +119,14 @@ public:
      */
     [[nodiscard]] int bottom_y() const;
 
+    /**
+     * @brief   True while the record screen is showing.
+     * @note    For the caller drawing the level meter under the UI: the meter
+     *          belongs to recording, so it is not shown on the home screen
+     *          even though there is room for it there.
+     */
+    [[nodiscard]] bool on_record_screen() const { return screen_ == Screen::record; }
+
 private:
 
     /* 20 steps, so the display moves in 5% increments. */

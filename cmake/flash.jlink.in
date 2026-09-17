@@ -1,2 +1,5 @@
+exitonerror 1
 loadfile @FLASH_HEX@
-w4 0xE000ED0C, 0x05FA0004
+r
+g
+qc

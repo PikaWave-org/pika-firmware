@@ -139,19 +139,16 @@ function(pika_add_firmware name)
             BYPRODUCTS "${FLASH_HEX}"
             COMMENT "Generating ${name}.hex")
 
-    # "make flash-<name>": program over SWD with a SEGGER J-Link.
-    #
-    # stdin is closed and the exit status ignored on purpose: J-Link Commander
-    # keeps reading commands after the script file ends and returns 1 when it
-    # is stopped that way, even after a successful download. Check its output
-    # ("Flash download" / "O.K.") to confirm the programming worked.
+    # "make flash-<name>": program over SWD with a SEGGER J-Link, given the
+    # same commands one would type at its prompt. They arrive on stdin rather
+    # than via -CommandFile because J-Link Commander V7.88 does not parse
+    # argument-less commands ("r", "g", "qc") out of a command file, and
+    # without a working "qc" it falls into its interactive prompt and hangs
+    # whatever build tool ran it.
     configure_file("${PROJECT_ROOT}/cmake/flash.jlink.in"
             "${CMAKE_CURRENT_BINARY_DIR}/${name}.jlink" @ONLY)
-    set(jlink_cmd "JLinkExe -nogui 1 -device ${BOARD_JLINK_DEVICE} -if SWD -speed 4000")
-    string(APPEND jlink_cmd " -autoconnect 1 -CommandFile ${CMAKE_CURRENT_BINARY_DIR}/${name}.jlink")
-    string(APPEND jlink_cmd " < /dev/null; exit 0")
     add_custom_target(flash-${name}
-            COMMAND sh -c "${jlink_cmd}"
+            COMMAND sh -c "JLinkExe -nogui 1 -device ${BOARD_JLINK_DEVICE} -if SWD -speed 4000 -autoconnect 1 < ${CMAKE_CURRENT_BINARY_DIR}/${name}.jlink"
             DEPENDS ${name}.elf
             USES_TERMINAL VERBATIM
             COMMENT "Flashing ${name}.hex via J-Link")

@@ -12,8 +12,8 @@
 #include <pika/audio/sounds/meow.h>
 #include <pika/audio/tone_generator.h>
 #include <pika/buttons.h>
-#include <pika/log.h>
 #include <pika/lcd/ST75160.h>
+#include <pika/log.h>
 #include <pika/ublox.h>
 #include <pika/ui.h>
 
@@ -109,14 +109,18 @@ public:
         for (int16_t s: buf) {
             const uint32_t mag = (uint32_t) (s < 0 ? -(int32_t) s : (int32_t) s);
 
-            if (mag > peak) { peak = mag; }
+            if (mag > peak) {
+                peak = mag;
+            }
             sum += (uint64_t) mag * mag;
         }
 
         mic_peak = peak;
         mic_rms = buf.empty() ? 0U : (uint32_t) sqrtf((float) (sum / buf.size()));
 
-        if (peak > mic_peak_max) { mic_peak_max = peak; }
+        if (peak > mic_peak_max) {
+            mic_peak_max = peak;
+        }
 
         /*
          * Peak hold, rising instantly and falling about 3% a block. The panel
@@ -151,7 +155,9 @@ public:
             std::copy_n(buf.begin(), n, &record_buf[record_len]);
             record_len += n;
 
-            if (n < buf.size()) { record_full = true; }
+            if (n < buf.size()) {
+                record_full = true;
+            }
         }
     }
 };
@@ -193,8 +199,8 @@ static constexpr unsigned replay_delay_ticks = 1000U / heartbeat_tick_ms;
    as a longer note. */
 static constexpr float beep_in_hz = 800.0f;
 static constexpr float beep_in_s = 0.1f;
-static constexpr float beep_out_hz = 400.0f;
-static constexpr float beep_out_s = 0.2f;
+static constexpr float beep_out_hz = 600.0f;
+static constexpr float beep_out_s = 0.1f;
 static constexpr float beep_gain = 0.3f;
 
 /*
@@ -229,7 +235,9 @@ static const char *record_status() {
 
     static char text[20];
 
-    if (!mic_ready) { return "no mic"; }
+    if (!mic_ready) {
+        return "no mic";
+    }
 
     switch (rec_state) {
         case Rec::recording:
@@ -242,7 +250,9 @@ static const char *record_status() {
             break;
 
         case Rec::idle:
-            if (record_len == 0U) { return "ready"; }
+            if (record_len == 0U) {
+                return "ready";
+            }
 
             chsnprintf(text, sizeof text, "last %u.%us", record_tenths() / 10U, record_tenths() % 10U);
             break;
@@ -291,10 +301,10 @@ static volatile uint32_t flush_ms;
 
 /*
  * The microphone level block, at the bottom of the panel below what the UI
- * draws. Whether there is room for it depends on the screen - the menu is five
- * rows now and reaches further down than this - so the heartbeat asks the UI
- * where it ended rather than this making an assumption that a new menu row
- * would quietly break.
+ * draws, and only on the record screen - it is part of recording, not a
+ * permanent readout. The heartbeat also asks the UI where it ended rather than
+ * assuming there is room, so a record screen that grows a row breaks loudly
+ * instead of being quietly overdrawn.
  */
 static constexpr int mic_text_y = 74;
 static constexpr int mic_bar_y = 84;
@@ -389,7 +399,9 @@ static bool serve_record() {
             /* Nothing to record into if the microphone is not running - that is
                the meow holding the clock, and the hold simply takes effect on
                the first tick after it finishes. */
-            if (!ui.record_held() || !mic.capturing()) { return false; }
+            if (!ui.record_held() || !mic.capturing()) {
+                return false;
+            }
 
             record_len = 0U;
             record_full = false;
@@ -399,7 +411,9 @@ static bool serve_record() {
             break;
 
         case Rec::recording:
-            if (ui.record_held() && mic.capturing()) { break; }
+            if (ui.record_held() && mic.capturing()) {
+                break;
+            }
 
             record_arm = false;
             LOG("rec: %u samples%s", (unsigned) record_len, record_full ? " (full)" : "");
@@ -422,7 +436,9 @@ static bool serve_record() {
                 break;
             }
 
-            if (mic.capturing()) { mic.stop_capture(); }
+            if (mic.capturing()) {
+                mic.stop_capture();
+            }
 
             /* The recording peaks far below full scale - speech reads around
                -18dB on the meter - so playing it at the volume setting would
@@ -437,7 +453,9 @@ static bool serve_record() {
             break;
 
         case Rec::beep_in:
-            if (spk.busy()) { break; }
+            if (spk.busy()) {
+                break;
+            }
 
             if (!rec_player.play(spk, {record_buf, record_len})) {
                 LOG("rec: replay rejected");
@@ -450,19 +468,25 @@ static bool serve_record() {
             break;
 
         case Rec::replay:
-            if (spk.busy()) { break; }
+            if (spk.busy()) {
+                break;
+            }
 
             /* The only view of an underrun there is from out here, and this
                replay is four times longer than anything else this board
                plays. */
-            if (spk.last_error() != 0U) { LOG("rec: speaker error 0x%08x", (unsigned) spk.last_error()); }
+            if (spk.last_error() != 0U) {
+                LOG("rec: speaker error 0x%08x", (unsigned) spk.last_error());
+            }
 
             tone_gen.tone(spk, beep_out_hz, beep_gain, beep_out_s);
             rec_state = Rec::beep_out;
             break;
 
         case Rec::beep_out:
-            if (spk.busy()) { break; }
+            if (spk.busy()) {
+                break;
+            }
 
             spk.set_volume(rec_volume);
             rec_state = Rec::idle;
@@ -496,20 +520,26 @@ static void serve_audio() {
      * A test sound asked for mid sequence is left pending rather than dropped,
      * so it plays once the replay is over.
      */
-    if (serve_record()) { return; }
+    if (serve_record()) {
+        return;
+    }
 
     if (sound_requested) {
         sound_requested = false;
 
-        if (mic.capturing()) { mic.stop_capture(); }
+        if (mic.capturing()) {
+            mic.stop_capture();
+        }
 
-        if (!pcm_player.play(spk, pika::audio::meow)) { LOG("spk: meow rejected"); }
+        if (!pcm_player.play(spk, pika::audio::meow)) {
+            LOG("spk: meow rejected");
+        }
         return;
     }
 
     if (mic_ready && !mic.capturing() && !spk.busy() && !mic.start_capture(mic_level)) {
         LOG("mic: capture rejected, error 0x%08x", (unsigned) mic.last_error());
-        mic_ready = false;/* do not retry ten times a second */
+        mic_ready = false; /* do not retry ten times a second */
     }
 }
 
@@ -671,9 +701,11 @@ static THD_FUNCTION(heartbeat, arg) {
         if (beat_due || ui_moved || mic_due) {
             ui.draw();
 
-            /* Only where the UI left room: its menu reaches past the top of
-               this block, and drawing anyway would erase the last row. */
-            if (ui.bottom_y() <= mic_text_y) { draw_mic(); }
+            /* Only on the record screen, and only where the UI left room:
+               drawing over a row it wrote would erase it. */
+            if (ui.on_record_screen() && ui.bottom_y() <= mic_text_y) {
+                draw_mic();
+            }
 
             systime_t start = chVTGetSystemTimeX();
             bool ok = lcd.flush();
@@ -687,7 +719,9 @@ static THD_FUNCTION(heartbeat, arg) {
             }
         }
 
-        if (beat_due) { beat++; }
+        if (beat_due) {
+            beat++;
+        }
 
         chThdSleepMilliseconds(heartbeat_tick_ms);
         tick = (tick + 1) % heartbeat_ticks_per_beat;
@@ -787,7 +821,5 @@ int main() {
 
     chThdCreateStatic(waUi, sizeof(waUi), NORMALPRIO, ui_reader, nullptr);
 
-    while (true) {
-        chThdSleepMilliseconds(2000);
-    }
+    while (true) { chThdSleepMilliseconds(2000); }
 }

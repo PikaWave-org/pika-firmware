@@ -36,83 +36,79 @@ namespace pika::lcd {
 
 class ST75160 {
 public:
+    static constexpr int width = 160;
+    static constexpr int height = 100;
 
-  static constexpr int width = 160;
-  static constexpr int height = 100;
+    /* 8 display rows per DDRAM page, 13 pages to cover 100 rows. */
+    static constexpr int pages = 13;
+    static constexpr unsigned fb_size = pages * width;
 
-  /* 8 display rows per DDRAM page, 13 pages to cover 100 rows. */
-  static constexpr int pages = 13;
-  static constexpr unsigned fb_size = pages * width;
-
-  /**
+    /**
    * @brief   How the panel is wired up, taken from the board header.
    */
-  struct Config {
-    I2CDriver *i2c;       /**< Bus the panel is on.                           */
-    i2caddr_t  addr;      /**< 7 bit slave address.                           */
-    ioline_t   rst;       /**< Panel reset, active low.                       */
-    ioline_t   bklt;      /**< Backlight enable, active high.                 */
-    ioline_t   scl;       /**< Bus clock, driven directly during recovery.    */
-    ioline_t   sda;       /**< Bus data, driven directly during recovery.     */
-    iomode_t   pinmode;   /**< Mode to restore on scl/sda after recovery.     */
-  };
+    struct Config {
+        I2CDriver *i2c;   /**< Bus the panel is on.                           */
+        i2caddr_t addr;   /**< 7 bit slave address.                           */
+        ioline_t rst;     /**< Panel reset, active low.                       */
+        ioline_t bklt;    /**< Backlight enable, active high.                 */
+        ioline_t scl;     /**< Bus clock, driven directly during recovery.    */
+        ioline_t sda;     /**< Bus data, driven directly during recovery.     */
+        iomode_t pinmode; /**< Mode to restore on scl/sda after recovery.     */
+    };
 
-  explicit ST75160(const Config &cfg);
+    explicit ST75160(const Config &cfg);
 
-  /**
+    /**
    * @brief   Resets the panel and runs the initialization sequence.
    * @note    Leaves the display on, showing a cleared framebuffer.
    * @return  false if any I2C transaction failed, see last_error().
    */
-  bool init(bool skip_otp = false);
+    bool init(bool skip_otp = false);
 
-  /** @brief  Fills the framebuffer, false = all pixels off. */
-  void clear(bool on = false);
+    /** @brief  Fills the framebuffer, false = all pixels off. */
+    void clear(bool on = false);
 
-  /** @brief  Sets or clears one pixel, out of range coordinates are ignored. */
-  void pixel(int x, int y, bool on);
+    /** @brief  Sets or clears one pixel, out of range coordinates are ignored. */
+    void pixel(int x, int y, bool on);
 
-  /** @brief  Draws a filled rectangle. */
-  void rect(int x, int y, int w, int h, bool on);
+    /** @brief  Draws a filled rectangle. */
+    void rect(int x, int y, int w, int h, bool on);
 
-  /** @brief  Draws a 1 pixel wide rectangle outline. */
-  void frame(int x, int y, int w, int h, bool on);
+    /** @brief  Draws a 1 pixel wide rectangle outline. */
+    void frame(int x, int y, int w, int h, bool on);
 
-  /**
+    /**
    * @brief   Draws a string in the 8x8 font, no wrapping.
    * @return  The x coordinate just past the last glyph.
    */
-  int text(int x, int y, const char *s, bool on = true);
+    int text(int x, int y, const char *s, bool on = true);
 
-  /** @brief  Sends the framebuffer to the panel. */
-  bool flush();
+    /** @brief  Sends the framebuffer to the panel. */
+    bool flush();
 
-  /**
+    /**
    * @brief   Sets the contrast, as the Vop word the datasheet defines.
    * @note    V0 = 3.6 + vop * 0.04 volts; init() programs 200, so 11.6V.
    * @note    One I2C transaction, sharing the sequencing buffer with
    *          flush(), so call it only from the thread that owns the panel.
    * @return  false if the transaction failed, see last_error().
    */
-  bool contrast(uint16_t vop);
+    bool contrast(uint16_t vop);
 
-  /** @brief  Switches the backlight. */
-  void backlight(bool on);
+    /** @brief  Switches the backlight. */
+    void backlight(bool on);
 
-  /** @brief  I2C error flags from the last failed transaction, 0 if none. */
-  uint32_t last_error() const { return error_flags_; }
+    /** @brief  I2C error flags from the last failed transaction, 0 if none. */
+    uint32_t last_error() const { return error_flags_; }
 
 private:
+    bool xfer(const uint8_t *buf, size_t len, sysinterval_t timeout);
+    bool run_co1(const uint8_t *script, size_t len);
 
-  bool xfer(const uint8_t *buf, size_t len, sysinterval_t timeout);
-  void bus_recover();
-  bool run_co1(const uint8_t *script, size_t len);
-
-  Config cfg_;
-  uint8_t *fb_;                 /**< Framebuffer, inside the TX buffer.     */
-  uint32_t error_flags_ = 0U;
-  bool ready_ = false;
+    Config cfg_;
+    uint8_t *fb_; /**< Framebuffer, inside the TX buffer.     */
+    uint32_t error_flags_ = 0U;
+    bool ready_ = false;
 };
 
 } /* namespace pika::lcd */
-

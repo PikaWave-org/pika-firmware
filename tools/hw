@@ -199,13 +199,8 @@ locked_flash() {
     # Say which tree this image comes from: several worktrees build the same
     # target name, and the board keeps whatever was flashed last.
     note "flashing $FW_TARGET from $BUILD_DIR"
-    # J-Link Commander exits 1 even on a good download, so the output is the
-    # only reliable signal - see cmake/chibios.cmake.
-    local out
-    out=$(cmake --build "$BUILD_DIR" --target "flash-$FW_TARGET" 2>&1)
-    printf '%s\n' "$out"
-    grep -qi 'Flash download.*O\.K\.\|O\.K\.' <<<"$out" \
-        || die "flash did not report O.K. - the board was NOT programmed"
+    cmake --build "$BUILD_DIR" --target "flash-$FW_TARGET" \
+        || die "flash failed - the board was NOT programmed"
     note "flash OK"
 }
 

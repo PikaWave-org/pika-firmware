@@ -42,11 +42,6 @@
 
 namespace pika::audio {
 
-/* Samples per buffer half, i.e. 8ms of audio and a 125Hz drain callback. The
-   same figure as the speaker's, so a recording and a playback move in blocks
-   of the same size. */
-constexpr unsigned mic_buffer_half_len = 256U;
-
 /**
  * @brief   Error flags reported by last_error().
  */
@@ -54,7 +49,6 @@ enum : uint32_t {
     err_mic_dma = 1U << 0,     /**< DMA transfer error, the stream was freed.  */
     err_mic_overrun = 1U << 1, /**< A conversion landed before the last was
                                     read; the sample is lost.                  */
-    err_mic_awd = 1U << 2      /**< Analog watchdog, not armed by this driver. */
 };
 
 class ADCMicrophone {
@@ -133,6 +127,12 @@ private:
      * series resistance is on the pin.
      */
     static constexpr uint32_t SMP_TIME = ADC_SMPR_SMP_64P5;
+
+    /* Samples per buffer half, i.e. 8ms of audio and a 125Hz drain callback. The
+       same figure as the speaker's, so a recording and a playback move in blocks
+       of the same size. */
+    static constexpr unsigned mic_buffer_half_len = 256U;
+    static __attribute__((section(".nocache"), aligned(4))) adcsample_t mic_buffer[2U * mic_buffer_half_len];
 
     /*
      * The DC tracker, as a one-pole IIR in fixed point: dc_ holds the estimate

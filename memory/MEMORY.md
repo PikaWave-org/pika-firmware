@@ -26,6 +26,6 @@ design rules in CLAUDE.md instead of here.
 
 ## Working on the hardware
 
-- [SWD run control and fake presses](swd-run-control-and-fake-presses.md) — JLinkExe command files cannot resume the core; use the GDB server. Flipping PUPDR fakes a button press, which drives any feature needing input with nobody at the keyboard.
+- [SWD run control and fake presses](swd-run-control-and-fake-presses.md) — JLinkExe V7.88 ignores argument-less commands (`r`, `g`, `qc`) in a command file, which is why flashing used to hang; feed them on stdin. Timed run control goes through the GDB server. Flipping PUPDR fakes a button press, which drives any feature needing input with nobody at the keyboard.
 - [Isolating a GPIO fault](gpio-fault-isolation-technique.md) — prove whether a dead input is hardware or firmware before touching code, and why a scan without a known-good control proves nothing.
 - [Reading the panel over SWD](read-panel-over-swd.md) — where the framebuffer lives and how to decode it, so panel output can be checked on a running board with a dead log and nobody looking at it.

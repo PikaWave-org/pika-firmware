@@ -1,6 +1,6 @@
 ---
 name: swd-run-control-and-fake-presses
-description: JLinkExe command files have no run control; use the GDB server with the ELF. Flipping PUPDR over SWD fakes a button press.
+description: JLinkExe V7.88 drops argument-less commands from a command file - feed them on stdin; timed run control goes through the GDB server. Flipping PUPDR over SWD fakes a button press.
 metadata: 
   node_type: memory
   type: reference
@@ -8,14 +8,19 @@ metadata:
   modified: 2026-09-15T23:02:27.204Z
 ---
 
-**JLinkExe `-CommandFile` cannot resume the core.** `mem32`, `w4` and `Sleep`
-work, but `g`, `go`, `q`, `qc` and `exit` all answer "Unknown command", and
-connecting halts the target - so a read-modify sequence leaves the board
-halted and the debug log simply stops. Without `-autoconnect 1` the script is
+**JLinkExe V7.88l does not parse argument-less commands out of a
+`-CommandFile`.** `r`, `h`, `g`, `q`, `qc`, `exit` and even `?` answer
+"Unknown command", while anything that takes an argument (`mem32`, `w4`,
+`Sleep`, `loadfile`, `exitonerror 1`) works. Tested 2026-09-17: a trailing
+space on the line makes them parse, and so does feeding the same lines on
+stdin (`JLinkExe ... -autoconnect 1 < file`), which is what the `flash-firmware`
+target does. Without a working `qc` Commander drops to its interactive prompt
+and waits on stdin, and under a build tool that never closes stdin that is a
+flash that "hangs right after init". Without `-autoconnect 1` the script is
 processed *before* the connection, so even the commands that do exist fail.
-Fine for reading static config registers, useless for anything timed.
 
-For run control use the GDB server instead:
+For a scripted sequence with timing (halt, write, resume, wait) the GDB server
+is still the better tool:
 
 ```
 JLinkGDBServerCLExe -device STM32H733VG -if SWD -speed 4000 -port 2331 -nogui
@@ -30,20 +35,12 @@ gdb-multiarch -batch -nx build/targets/firmware/firmware.elf \
 returns "not supported by this target" and every memory access fails, which
 reads like a broken probe rather than a missing argument.
 
-**But there is no ARM gdb on this machine.** As of 2026-09-17 `gdb` is the
-x86-only build, and neither `gdb-multiarch` nor `arm-none-eabi-gdb` is
-installed - so the recipe above cannot be run here at all, and installing one
-is a question for whoever owns the machine. Use **`tools/swd.py`** instead: the
-GDB server speaks RSP on the port, and halt, go, sleep, read and write are a
-handful of packets, which that file implements along with starting the server
-itself. `tools/hw run -- tools/swd.py mic_blocks rec_state` prints symbols;
-import `Swd` for a scripted press sequence.
-
-Two things it knows that cost time to find out:
+Two things that cost time to find out:
 
 - **A file-scope `static` is mangled.** `rec_state` is `_ZL9rec_state` in the
-  symbol table, so a plain name lookup misses exactly the variables a single
-  .cpp keeps to itself.
+  symbol table, so resolving an address with `arm-none-eabi-nm` by plain name
+  misses exactly the variables a single .cpp keeps to itself. gdb's `print`
+  is not fooled.
 - **A halt stops the CPU but not the converters.** Polling a state machine
   every 250ms visibly stretched every phase being measured - a 1s pause read
   as 2.1s and a 4s replay as 5.5s. Sample sparsely, at known wall times, and
