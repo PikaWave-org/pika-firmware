@@ -1,6 +1,6 @@
 ---
 name: read-panel-over-swd
-description: The framebuffer can be read out of D2 SRAM while the firmware runs, which is how you check what the panel says when the log is dead and you cannot see the board.
+description: The framebuffer can be read out of D2 SRAM while the firmware runs, which is how you check what the panel says when you cannot see the board.
 metadata:
   node_type: memory
   type: project
@@ -8,21 +8,24 @@ metadata:
 
 Anything drawn on the LCD can be read back over SWD from a running board, no
 halt and no reset. This is the only way to verify panel output from a session
-that cannot see the hardware, and it works on a boot whose log has already
-died in [[lcd-flush-hangs-after-few-beats]] - the framebuffer keeps whatever
-the last successful draw put there.
+that cannot see the hardware: the framebuffer keeps whatever the last draw put
+there.
 
 The buffer is `frame_tx + 1` in D2 SRAM, the byte after the I2C control byte -
 **0x30004801** on the images built here, but take it from the running object
 rather than trusting that number: `_ZL3lcd`'s `fb_` member holds it, at offset
-0x1c into the object on 2026-09-17. `arm-none-eabi-nm -S` gives both symbols.
+0x1c into the object (still so on 2026-09-17 after the ST75160 rewrite;
+`gdb-multiarch -batch -ex "ptype/o pika::lcd::ST75160" firmware.elf` shows
+the layout). `arm-none-eabi-nm -S` gives both symbols.
 
-    tools/hw run -r "read panel" -- JLinkExe -nogui 1 -device STM32H743ZI \
-        -if SWD -speed 4000 -CommanderScript <file with: mem8 0x30004801, 0x280>
+    tools/hw run -r "read panel" -- JLinkExe -nogui 1 -device STM32H733VG \
+        -if SWD -speed 4000 -autoconnect 1 \
+        -CommandFile <file with: mem8 0x30004801, 0x280>
 
-Reading is passive: no `h` in the command file. **Do not halt** - JLinkExe
-cannot resume the core afterwards (see [[swd-run-control-and-fake-presses]]),
-so a halt costs you the surviving boot you were measuring.
+Reading is passive: no `h` in the command file, and `mem8` takes arguments so
+it is immune to the command-file bug in [[swd-run-control-and-fake-presses]].
+**Do not halt** - a halt stops the boot you were measuring, and the debug log
+with it.
 
 Decoding takes both transforms in `ST75160::pixel()` together, and getting
 either one wrong still produces plausible-looking noise:

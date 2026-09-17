@@ -10,8 +10,9 @@ the slave ACKs every byte and `i2cGetErrors()` stays clean **while no data
 moves at all** - unless two things are both true:
 
 1. The buffers live in **D2 SRAM** (`0x30004000`, the linker script's
-   `.nocache` section, `DMA_BUF` in `src/pika/st75160.cpp`), the domain
-   DMA1/DMA2 sit in. Its clock is off at reset; `board.c` enables SRAM1/2 in
+   `.nocache` section - `DMA_BUF` in `src/pika/lcd/ST75160.cpp` and
+   `DACSpeaker.cpp`, the same attribute written out on
+   `ADCMicrophone::mic_buffer`), the domain DMA1/DMA2 sit in. Its clock is off at reset; `board.c` enables SRAM1/2 in
    `RCC_AHB2ENR` before anything touches it.
 2. That memory is **excluded from the data cache**. ChibiOS enables the
    Cortex-M7 D-cache in `crt1.c` (`__cpu_init`), so cached buffers leave the
@@ -25,8 +26,8 @@ whole LCD bring-up session. The wrong conclusion that started it was "nothing
 enables the D-cache in this build", from grepping `crt0_v7m.S` and
 `hal_lld.c` but not `crt1.c`.
 
-**How to apply:** anything a DMA controller touches goes in `.nocache` via
-`DMA_BUF`, never on a thread stack (those are DTCM, which no DMA controller
-here can reach). After any change to a DMA transport, prove data actually
-moves with `pika::lcd::verify()` rather than trusting return codes.
-See [[lcd-st75160-facts]].
+**How to apply:** anything a DMA controller touches goes in `.nocache`, never
+on a thread stack (those are DTCM, which no DMA controller here can reach).
+After any change to a DMA transport, prove data actually moves - read the
+panel back ([[read-panel-over-swd]]) or check the mic meter varies - rather
+than trusting return codes. See [[lcd-st75160-facts]].

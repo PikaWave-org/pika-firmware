@@ -46,9 +46,9 @@ Two ADCv4 details that fail silently rather than loudly:
 - Do **not** put `ADC_SQR1_NUM_CH` in `sqr[0]`. The driver ORs it in from
   `num_channels` (`hal_adc_lld.c:839`) and setting both corrupts the length.
 
-The sample buffer goes in `.nocache` via `DMA_BUF`, for the reason in
-[[i2c-dma-silently-broken]] - ADCv4 does no cache maintenance of its own, so
-the section is the whole of the answer.
+The sample buffer (`ADCMicrophone::mic_buffer`) goes in `.nocache`, for the
+reason in [[i2c-dma-silently-broken]] - ADCv4 does no cache maintenance of its
+own, so the section is the whole of the answer.
 
 The speaker and the microphone share one timer's TRGO, because the device
 either talks or listens and never both. `pika::audio::SampleClock` owns it and

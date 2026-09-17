@@ -7,10 +7,6 @@ Keep this set small and true. A note earns its place by saving someone a day;
 delete one the moment it stops being accurate, and put style, workflow and
 design rules in CLAUDE.md instead of here.
 
-## Live problems
-
-- [LCD flush hangs after a few beats](lcd-flush-hangs-after-few-beats.md) — unfixed. The log dying a few seconds in is an I2C lost wakeup, not your change, and a long healthy run does not mean a fix. Read this before scoring any boot.
-
 ## The board
 
 - [pika_go_0 placeholders](pika-go-0-board-placeholders.md) — 24MHz HSE gated by PC15, LED on PE9, confirmed on hardware.
@@ -28,4 +24,4 @@ design rules in CLAUDE.md instead of here.
 
 - [SWD run control and fake presses](swd-run-control-and-fake-presses.md) — JLinkExe V7.88 ignores argument-less commands (`r`, `g`, `qc`) in a command file, which is why flashing used to hang; feed them on stdin. Timed run control goes through the GDB server. Flipping PUPDR fakes a button press, which drives any feature needing input with nobody at the keyboard.
 - [Isolating a GPIO fault](gpio-fault-isolation-technique.md) — prove whether a dead input is hardware or firmware before touching code, and why a scan without a known-good control proves nothing.
-- [Reading the panel over SWD](read-panel-over-swd.md) — where the framebuffer lives and how to decode it, so panel output can be checked on a running board with a dead log and nobody looking at it.
+- [Reading the panel over SWD](read-panel-over-swd.md) — where the framebuffer lives and how to decode it, so panel output can be checked on a running board with nobody looking at it.
