@@ -20,11 +20,22 @@
 #include <pika/ui.h>
 
 /* The panel, wired up as the board header describes it. */
-static const pika::lcd::ST75160::Config lcd_cfg = {&BOARD_LCD_I2C,       BOARD_LCD_I2C_ADDR, LINE_LCD_RST,
-                                                   LINE_LCD_BKLT,        LINE_LCD_SCL,       LINE_LCD_SDA,
-                                                   BOARD_LCD_I2C_PINMODE};
+static const pika::lcd::ST75160::Config lcd_cfg = {&BOARD_LCD_I2C, BOARD_LCD_I2C_ADDR, LINE_LCD_RST,
+                                                   LINE_LCD_SCL,   LINE_LCD_SDA,       BOARD_LCD_I2C_PINMODE};
 
 static pika::lcd::ST75160 lcd{lcd_cfg};
+
+/*
+ * The backlight: a LED on TIM1_CH1, 10kHz from a 10MHz counter, so one period
+ * is 1000 ticks and the duty is the brightness. The counter frequency has to
+ * divide the timer clock exactly - 260MHz / 10MHz = 26 here - or pwmStart()
+ * asserts. Channels other than the backlight's stay PWM_OUTPUT_DISABLED, which
+ * is what the zeroed entries mean.
+ */
+static constexpr uint32_t bklt_pwm_hz = 10000000U;
+static constexpr pwmcnt_t bklt_period = bklt_pwm_hz / 10000U;
+
+static PWMConfig bklt_pwm_cfg = {bklt_pwm_hz, bklt_period, nullptr, {}, 0U, 0U, 0U};
 
 /*
  * The 32kHz sample clock, shared by the speaker and the microphone.
@@ -233,7 +244,8 @@ static_assert(pika::lcd::pika_logo_width <= pika::lcd::ST75160::width &&
    this file's business. */
 static constexpr int ui_y = 30;
 
-static const pika::ui::Ui::Config ui_cfg = {&lcd, &spk, ui_y, btn_cfg, play_test_sound, record_status};
+static const pika::ui::Ui::Config ui_cfg = {
+        &lcd, &spk, ui_y, btn_cfg, play_test_sound, record_status, &BOARD_LCD_BKLT_PWM, BOARD_LCD_BKLT_PWM_CHANNEL};
 
 static pika::ui::Ui ui{ui_cfg};
 
@@ -665,18 +677,20 @@ int main() {
     pika::log_init();
     LOG("\r\n" BOARD_NAME " starting");
 
-    lcd.backlight(true);
+    /* The pin only leaves the plain low output board.c gave it once the PWM is
+       running, so the backlight stays dark across the handover. */
+    bklt_pwm_cfg.channels[BOARD_LCD_BKLT_PWM_CHANNEL].mode = PWM_OUTPUT_ACTIVE_HIGH;
+    pwmStart(&BOARD_LCD_BKLT_PWM, &bklt_pwm_cfg);
+    pwmEnableChannel(&BOARD_LCD_BKLT_PWM, BOARD_LCD_BKLT_PWM_CHANNEL,
+                     PWM_PERCENTAGE_TO_WIDTH(&BOARD_LCD_BKLT_PWM, 10000U));
+    palSetLineMode(LINE_LCD_BKLT, BOARD_LCD_BKLT_PINMODE);
 
     bool ok = lcd.init();
     LOG("lcd: init %s, i2c error 0x%08x", ok ? "ok" : "failed", (unsigned) lcd.last_error());
 
-    /*
-     * The splash, which is exactly the size of the panel and so needs no
-     * placing. The two seconds it is up are not two seconds of waiting: the
-     * speaker and the microphone are brought up underneath it and only the
-     * remainder is slept away, so a boot that gets slower later eats into the
-     * splash rather than into the time to first beat.
-     */
+    /* The splash is exactly the size of the panel, so it needs no placing. The
+       speaker and the microphone come up underneath it and only the remainder
+       of splash_ms is slept away, so it costs no time to first beat. */
     systime_t splash_start = chVTGetSystemTimeX();
 
     if (ok) {
@@ -701,9 +715,8 @@ int main() {
     LOG("mic: init %s", mic_ready ? "ok" : "failed");
 
     /* What is left of the splash, then the screen the heartbeat writes into.
-       TIME_I2MS of the elapsed time rather than a deadline compare, so a tick
-       counter that wrapped between the two reads cannot leave this asleep for
-       a very long time. */
+       Elapsed time rather than a deadline compare, so a wrapped tick counter
+       cannot leave this asleep for a very long time. */
     const uint32_t splash_shown_ms = (uint32_t) TIME_I2MS(chVTTimeElapsedSinceX(splash_start));
     if (splash_shown_ms < splash_ms) {
         chThdSleepMilliseconds(splash_ms - splash_shown_ms);

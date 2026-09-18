@@ -41,13 +41,14 @@ constexpr size_t menu_count = sizeof menu / sizeof menu[0];
 
 Ui::Ui(const Config &cfg)
         : cfg_(cfg), buttons_(cfg.buttons), dirty_(true), volume_step_(volume_initial),
-          screen_(Screen::home), cursor_(0U), backlight_(true), contrast_step_(contrast_initial),
+          screen_(Screen::home), cursor_(0U), backlight_step_(backlight_initial), contrast_step_(contrast_initial),
           contrast_pending_(false), editing_(false), record_gate_(false) {}
 
 void Ui::init() {
     buttons_.init();
 
     cfg_.speaker->set_volume(volume_gain(volume_step_));
+    set_backlight();
     dirty_ = true;
 }
 
@@ -107,6 +108,37 @@ void Ui::adjust_volume(int delta) {
     dirty_ = true;
 }
 
+unsigned Ui::backlight_percent() const { return (unsigned) backlight_step_ * backlight_percent_per_step; }
+
+/* Straight onto the timer channel: one register write, nothing for the panel's
+   thread to arbitrate. The macro wants hundredths of a percent. */
+void Ui::set_backlight() {
+    pwmEnableChannel(cfg_.backlight_pwm, cfg_.backlight_ch,
+                     PWM_PERCENTAGE_TO_WIDTH(cfg_.backlight_pwm, backlight_percent() * 100U));
+}
+
+void Ui::adjust_backlight(int delta) {
+    int step = (int) backlight_step_ + delta;
+
+    if (step < 0) {
+        step = 0;
+    }
+    if (step > backlight_steps) {
+        step = backlight_steps;
+    }
+
+    if (step == (int) backlight_step_) {
+        return;
+    }
+
+    backlight_step_ = (uint8_t) step;
+    set_backlight();
+
+    LOG("ui: backlight %u%%", backlight_percent());
+
+    dirty_ = true;
+}
+
 uint16_t Ui::contrast_vop(uint8_t step) { return contrast_vop_min + (uint16_t) step * contrast_vop_step; }
 
 /* V0 = 3.6 + vop * 0.04 volts, in tenths because chprintf() has no %f. Every
@@ -146,11 +178,6 @@ bool Ui::take_contrast(uint16_t &vop) {
 void Ui::activate() {
     switch (menu[cursor_].id) {
     case ItemId::backlight:
-        backlight_ = !backlight_;
-        cfg_.lcd->backlight(backlight_);
-        LOG("ui: backlight %s", backlight_ ? "on" : "off");
-        break;
-
     case ItemId::contrast:
         editing_ = true;
         break;
@@ -215,13 +242,17 @@ void Ui::handle(Action a) {
        select and back leave: the value is applied as it changes, so there is
        no pending edit for one of them to discard. */
     if (editing_) {
+        /* Which value the cursor keys move is the row they are on. */
+        const int delta = (a == Action::up) ? +1 : -1;
+
         switch (a) {
         case Action::up:
-            adjust_contrast(+1);
-            break;
-
         case Action::down:
-            adjust_contrast(-1);
+            if (menu[cursor_].id == ItemId::backlight) {
+                adjust_backlight(delta);
+            } else {
+                adjust_contrast(delta);
+            }
             break;
 
         case Action::select:
@@ -365,18 +396,23 @@ void Ui::draw_menu() {
 
         cfg_.lcd->text(label_x, row_y, menu[i].label);
 
-        switch (menu[i].id) {
-        case ItemId::backlight:
-            cfg_.lcd->text(value_x, row_y, backlight_ ? "on" : "off");
-            break;
+        /* Brackets mark the value the cursor keys are moving, on the row under
+           the cursor only. */
+        const bool edited = editing_ && (i == cursor_);
 
-        /* Brackets mark the value the cursor keys are moving, so the mode is
-           visible without a second cursor or a separate screen. */
+        switch (menu[i].id) {
+        case ItemId::backlight: {
+            char value[12];
+            chsnprintf(value, sizeof value, edited ? "[%u%%]" : "%u%%", backlight_percent());
+            cfg_.lcd->text(value_x, row_y, value);
+            break;
+        }
+
         case ItemId::contrast: {
             const unsigned tenths = contrast_tenths();
 
             char value[12];
-            chsnprintf(value, sizeof value, editing_ ? "[%u.%uV]" : "%u.%uV", tenths / 10U, tenths % 10U);
+            chsnprintf(value, sizeof value, edited ? "[%u.%uV]" : "%u.%uV", tenths / 10U, tenths % 10U);
             cfg_.lcd->text(value_x, row_y, value);
             break;
         }

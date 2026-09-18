@@ -106,6 +106,21 @@
                                      PAL_STM32_OSPEED_MID2)
 
 /*
+ * Backlight brightness, as PWM rather than a plain output.
+ *
+ * LINE_LCD_BKLT is PE9 = TIM1_CH1 on AF1, driving the gate of Q1 (BSS138),
+ * which switches the backlight string on J4 to ground. The duty cycle is the
+ * brightness. The channel is the driver's 0 based index, so CH1 is 0.
+ *
+ * board.c leaves the pin a plain output, low; main() starts the PWM, switches
+ * the pin to AF1 and hands the UI the same driver and channel.
+ */
+#define BOARD_LCD_BKLT_PWM          PWMD1
+#define BOARD_LCD_BKLT_PWM_CHANNEL  0U
+#define BOARD_LCD_BKLT_PINMODE      (PAL_MODE_ALTERNATE(1U) |               \
+                                     PAL_STM32_OSPEED_LOWEST)
+
+/*
  * Speaker, driven through an SSM2305 class D amplifier.
  *
  * LINE_SPK_OUT is DAC1_OUT1, so the DAC drives the pin directly and it stays

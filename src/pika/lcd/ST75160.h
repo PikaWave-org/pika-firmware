@@ -2,10 +2,13 @@
  * Driver for the Newhaven NHD-C160100DiZ-FSW-FBW display: 160x100
  * monochrome COG panel with an ST75160i controller on I2C.
  *
- * The panel's wiring - its I2C driver, bus address, reset, backlight and the
- * two bus pins - is passed in as a Config at construction, so the driver
- * itself does not depend on any board header. The board's own BOARD_LCD_* and
- * LINE_LCD_* definitions are what the caller fills the Config from.
+ * The panel's wiring - its I2C driver, bus address, reset and the two bus pins
+ * - is passed in as a Config at construction, so the driver itself does not
+ * depend on any board header. The board's own BOARD_LCD_* and LINE_LCD_*
+ * definitions are what the caller fills the Config from.
+ *
+ * The backlight is not here: it is a LED on a PWM channel, driven by its owner
+ * through the ChibiOS PWM driver - see main.cpp.
  *
  * Drawing goes into a RAM framebuffer; flush() pushes the whole frame in one
  * I2C transaction (~47ms at 400kHz), so draw everything, then flush once.
@@ -13,8 +16,7 @@
  * Usage:
  *
  *   static const pika::lcd::ST75160::Config lcd_cfg = {
- *     &BOARD_LCD_I2C, BOARD_LCD_I2C_ADDR,
- *     LINE_LCD_RST, LINE_LCD_BKLT,
+ *     &BOARD_LCD_I2C, BOARD_LCD_I2C_ADDR, LINE_LCD_RST,
  *     LINE_LCD_SCL, LINE_LCD_SDA, BOARD_LCD_I2C_PINMODE
  *   };
  *   static pika::lcd::ST75160 lcd{lcd_cfg};
@@ -50,7 +52,6 @@ public:
         I2CDriver *i2c;   /**< Bus the panel is on.                           */
         i2caddr_t addr;   /**< 7 bit slave address.                           */
         ioline_t rst;     /**< Panel reset, active low.                       */
-        ioline_t bklt;    /**< Backlight enable, active high.                 */
         ioline_t scl;     /**< Bus clock, driven directly during recovery.    */
         ioline_t sda;     /**< Bus data, driven directly during recovery.     */
         iomode_t pinmode; /**< Mode to restore on scl/sda after recovery.     */
@@ -63,7 +64,7 @@ public:
    * @note    Leaves the display on, showing a cleared framebuffer.
    * @return  false if any I2C transaction failed, see last_error().
    */
-    bool init(bool skip_otp = false);
+    bool init();
 
     /** @brief  Fills the framebuffer, false = all pixels off. */
     void clear(bool on = false);
@@ -103,9 +104,6 @@ public:
    * @return  false if the transaction failed, see last_error().
    */
     bool contrast(uint16_t vop);
-
-    /** @brief  Switches the backlight. */
-    void backlight(bool on);
 
     /** @brief  I2C error flags from the last failed transaction, 0 if none. */
     uint32_t last_error() const { return error_flags_; }

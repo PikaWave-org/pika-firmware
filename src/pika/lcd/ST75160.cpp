@@ -12,15 +12,15 @@ namespace {
  * I2C control bytes. Bit 7 is Co ("another control byte follows the data
  * byte"), bit 6 is A0 (0 = command, 1 = command parameter or display data).
  *
- * Everything here uses the Co=0 form: one control byte, then bytes of that
- * one kind until the STOP. Commands and their parameters therefore go out as
- * separate transactions, which is exactly what Newhaven's own example code
- * for this module does. The Co=1 interleaved form is in the datasheet's
- * timing diagram, but this controller does not appear to honour it: driving
- * init through Co=1 pairs left the panel showing noise, i.e. the command
- * bytes were being taken as display data.
+ * Commands and parameters use the Co=1 interleaved form: every byte carries
+ * its own control byte, 0x80 for a command and 0xC0 for a parameter, so a
+ * whole script goes out as one transaction with no STOP between a command and
+ * its parameters. run_co1() does the batching.
+ *
+ * Pixel data stays Co=0: one 0x40, then the frame until the STOP. A control
+ * byte per pixel byte would take a frame from 2081 to 4160 bytes.
  */
-constexpr uint8_t ctrl_data = 0x40U; /* Co=0, A0=1: parameter or pixels */
+constexpr uint8_t ctrl_data = 0x40U; /* Co=0, A0=1: the frame that follows */
 
 /* Synthetic last_error() values, outside the i2cflags_t range. */
 constexpr uint32_t err_bus_stuck = 0x80000000U;
@@ -44,8 +44,6 @@ const I2CConfig i2c_cfg = {STM32_TIMINGR_PRESC(12U) | STM32_TIMINGR_SCLDEL(3U) |
 /*
  * Init and addressing scripts. Each entry is a tag, a length and that many
  * bytes; OP_DELAY carries the delay in milliseconds in the length field.
- * Command bytes are sent one transaction each, parameters likewise, matching
- * the reference code for this module.
  */
 enum : uint8_t { OP_CMD = 0U, OP_PAR = 1U, OP_DELAY = 2U };
 
@@ -53,43 +51,18 @@ enum : uint8_t { OP_CMD = 0U, OP_PAR = 1U, OP_DELAY = 2U };
 #define PAR(x) OP_PAR, 1U, (uint8_t) (x)
 #define DELAY(ms) OP_DELAY, (uint8_t) (ms)
 
-/*
- * Initialization sequence from the NHD-C160100DiZ-FSW-FBW specification.
- */
-const uint8_t init_otp[] = {
-        CMD(0x31),            /* extension command set 2      */
-        CMD(0xD7), PAR(0x9F), /* disable auto read            */
-        CMD(0xE0), PAR(0x00), /* enable OTP read              */
-        DELAY(10), CMD(0xE3), /* OTP up-load                  */
-        DELAY(20), CMD(0xE1)  /* OTP control out              */
-};
-
 const uint8_t init_script[] = {
         CMD(0x30),                                   /* extension command set 1      */
         CMD(0x94),                                   /* sleep out                    */
-        CMD(0xAE),                                   /* display off                  */
-        DELAY(50),  CMD(0x20), PAR(0x0B),            /* power control: VB, VR, VF on */
+        CMD(0x20),  PAR(0x0B),                       /* power control: VB, VR, VF on */
         DELAY(100), CMD(0x81), PAR(0x08), PAR(0x03), /* Vop = 11.6V                  */
         CMD(0x31),                                   /* extension command set 2      */
-        CMD(0x20),                                   /* gray scale levels            */
-        PAR(0x00),  PAR(0x00), PAR(0x00), PAR(0x17), PAR(0x17), PAR(0x17), PAR(0x00),
-        PAR(0x00),  PAR(0x1D), PAR(0x00), PAR(0x00), PAR(0x1D), PAR(0x1D), PAR(0x1D),
-        PAR(0x00),  PAR(0x00), CMD(0x32), PAR(0x00), PAR(0x01), PAR(0x03), /* analog set, bias 1/11      */
-        CMD(0x51),  PAR(0xFB),                                             /* booster level x10            */
-        CMD(0x30),                                                         /* extension command set 1      */
-        CMD(0xF0),  PAR(0x10),                                             /* display mode: monochrome     */
-        CMD(0xCA),  PAR(0x00), PAR(0x63), PAR(0x00),                       /* display control, 100 duty  */
-        CMD(0xBC),  PAR(0x00),                                             /* data scan direction          */
-        CMD(0xA6),                                                         /* normal (not inverted)        */
-        CMD(0x31),  CMD(0x40),                                             /* internal power supply        */
-        CMD(0x30),                                                         /* extension command set 1      */
-        CMD(0x77),                                                         /* enable ICON RAM              */
-        CMD(0x15),  PAR(0x00), PAR(0x9F),                                  /* columns 0..159               */
-        CMD(0x76),                                                         /* disable ICON RAM             */
-        CMD(0x30),                                                         /* extension command set 1      */
-        CMD(0x75),  PAR(0x00), PAR(0x18),                                  /* row window                   */
-        CMD(0xAF),                                                         /* display on                   */
-        DELAY(200)};
+        CMD(0x32),  PAR(0x00), PAR(0x01), PAR(0x03), /* analog set, bias 1/11      */
+        CMD(0x30),                                   /* extension command set 1      */
+        CMD(0xCA),  PAR(0x00), PAR(0x63), PAR(0x00), /* display control, 100 duty  */
+        CMD(0x30),                                   /* extension command set 1      */
+        CMD(0xAF)                                    /* display on                   */
+};
 
 /*
  * Addressing preamble sent before every frame. 0x5C rewinds the column and
@@ -131,10 +104,7 @@ DMA_BUF uint8_t frame_tx[1 + ST75160::fb_size]; /* control byte + frame */
 
 /*
  * Scratch for run_co1(): a whole script emitted as one transaction with Co=1
- * control bytes, so each command's parameters follow it without an
- * intervening STOP. The vendor's code uses one transaction per byte instead;
- * which of the two this controller actually honours is what the selftest is
- * here to establish.
+ * control bytes.
  */
 DMA_BUF uint8_t seq_buf[192];
 
@@ -208,7 +178,7 @@ bool ST75160::run_co1(const uint8_t *script, size_t len) {
     return (n == 0U) || xfer(seq_buf, n, TIME_MS2I(100));
 }
 
-bool ST75160::init(bool skip_otp) {
+bool ST75160::init() {
     error_flags_ = 0U;
     ready_ = false;
     frame_tx[0] = ctrl_data;
@@ -217,19 +187,12 @@ bool ST75160::init(bool skip_otp) {
     /* Reset pulse. The datasheet only asks for 1us low and 1ms of settling,
      but the vendor's reference code uses 200ms and 100ms, so use those.*/
     palClearLine(cfg_.rst);
-    chThdSleepMilliseconds(200);
+    chThdSleepMilliseconds(1);
     palSetLine(cfg_.rst);
-    chThdSleepMilliseconds(100);
+    chThdSleepMilliseconds(1);
 
     if (i2cStart(cfg_.i2c, &i2c_cfg) != HAL_RET_SUCCESS) {
         error_flags_ = err_start;
-        return false;
-    }
-
-    /* The OTP up-load also disables the controller's own auto-read of the
-     factory trim, so skipping the whole block leaves the power-on values in
-     place, which is the safer of the two if the manual load misbehaves.*/
-    if (!skip_otp && !run_co1(init_otp, sizeof init_otp)) {
         return false;
     }
 
@@ -351,14 +314,6 @@ bool ST75160::contrast(uint16_t vop) {
     const uint8_t script[] = {CMD(0x30), CMD(0x81), PAR(vop & 0x3FU), PAR((vop >> 6) & 0x07U)};
 
     return run_co1(script, sizeof script);
-}
-
-void ST75160::backlight(bool on) {
-    if (on) {
-        palSetLine(cfg_.bklt);
-    } else {
-        palClearLine(cfg_.bklt);
-    }
 }
 
 } /* namespace pika::lcd */

@@ -62,6 +62,11 @@ public:
         /**< The record screen's status line, null if none. Called from draw(),
              so it runs on the panel's thread and may return a static buffer. */
         const char *(*record_status)();
+
+        /**< The backlight's timer channel. The UI writes the duty straight to
+             it - one register, so no arbitration, unlike the contrast. */
+        PWMDriver *backlight_pwm;
+        pwmchannel_t backlight_ch;
     };
 
     explicit Ui(const Config &cfg);
@@ -142,6 +147,13 @@ private:
     /* Below this the taper goes linear, see volume_gain(). */
     static constexpr uint8_t volume_knee_step = 2;
 
+    /* Backlight duty in steps of 10%, so 11 values from off to full. The eye's
+       response to a duty cycle is not linear, so the bottom steps are a much
+       larger visible change than the top ones. */
+    static constexpr uint8_t backlight_steps = 10U;
+    static constexpr uint8_t backlight_percent_per_step = 10U;
+    static constexpr uint8_t backlight_initial = backlight_steps;
+
     /* Contrast as the panel's Vop word, where V0 = 3.6 + vop * 0.04 volts.
        150..250 is 9.6V to 13.6V, a spread wide enough to go visibly light and
        visibly dark while staying well inside what the panel is rated for. */
@@ -166,11 +178,14 @@ private:
 
     unsigned volume_percent() const;
     unsigned contrast_tenths() const;
+    unsigned backlight_percent() const;
 
     void handle(Action a);
     void activate();
     void adjust_volume(int delta);
     void adjust_contrast(int delta);
+    void adjust_backlight(int delta);
+    void set_backlight();
 
     void draw_home();
     void draw_menu();
@@ -183,7 +198,7 @@ private:
     volatile uint8_t volume_step_;
     volatile Screen screen_;
     volatile uint8_t cursor_;
-    volatile bool backlight_;
+    volatile uint8_t backlight_step_;
     volatile uint8_t contrast_step_;
     volatile bool contrast_pending_;
     volatile bool editing_;

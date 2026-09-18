@@ -46,6 +46,7 @@ set(CHIBIOS_SOURCES
         "${CHIBIOS_LLD}/GPIOv2/hal_pal_lld.c"
         "${CHIBIOS_LLD}/I2Cv3/hal_i2c_lld.c"
         "${CHIBIOS_LLD}/TIMv1/hal_gpt_lld.c"
+        "${CHIBIOS_LLD}/TIMv1/hal_pwm_lld.c"
         "${CHIBIOS_LLD}/SYSTICKv1/hal_st_lld.c"
         "${CHIBIOS_LLD}/USARTv3/hal_serial_lld.c")
 
