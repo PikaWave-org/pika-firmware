@@ -295,17 +295,17 @@ static void draw_mic() {
     char line[24];
     chsnprintf(line, sizeof line, mic.capturing() ? "mic %.1f dB" : "mic off", peak_db);
 
-    lcd.rect(4, mic_text_y, pika::lcd::ST75160::width - 8, 8, false);
+    lcd.rect<false>(4, mic_text_y, pika::lcd::ST75160::width - 8, 8);
     lcd.text(4, mic_text_y, line);
 
-    lcd.rect(mic_bar_x, mic_bar_y, mic_bar_w, mic_bar_h, false);
-    lcd.frame(mic_bar_x, mic_bar_y, mic_bar_w, mic_bar_h, true);
+    lcd.rect<false>(mic_bar_x, mic_bar_y, mic_bar_w, mic_bar_h);
+    lcd.frame<true>(mic_bar_x, mic_bar_y, mic_bar_w, mic_bar_h);
 
     const int inner = mic_bar_w - 2 * mic_bar_inset;
     const int fill = (int) ((float) inner * (peak_db - mic_meter_db) / -mic_meter_db);
 
     if (fill > 0) {
-        lcd.rect(mic_bar_x + mic_bar_inset, mic_bar_y + mic_bar_inset, fill, mic_bar_h - 2 * mic_bar_inset, true);
+        lcd.rect<true>(mic_bar_x + mic_bar_inset, mic_bar_y + mic_bar_inset, fill, mic_bar_h - 2 * mic_bar_inset);
     }
 }
 
@@ -552,10 +552,9 @@ static void log_mon_hw() {
  * Heartbeat: a debug UART line and a counter on the LCD once a second, plus
  * the UI whenever it changes.
  *
- * The loop ticks ten times a second but only flushes on a beat or a UI change.
- * A flush is one I2C transaction for the whole frame, so an unchanged image is
- * not worth one, and waiting a whole second after a keypress reads as a dead
- * button.
+ * The loop ticks ten times a second but only draws on a beat or a UI change,
+ * and a flush sends only the pages drawn on since the last one. Waiting a
+ * whole second after a keypress would read as a dead button.
  *
  * The panel is flushed only here, so everything on it is drawn from this
  * thread.
@@ -594,15 +593,15 @@ static THD_FUNCTION(heartbeat, arg) {
 
             char line[24];
             chsnprintf(line, sizeof line, "beat %u", beat);
-            lcd.rect(4, 20, 8 * 12, 8, false);
+            lcd.rect<false>(4, 20, 8 * 12, 8);
             lcd.text(4, 20, line);
         }
 
         /*
          * A level meter that moved once a second would not read as a level
          * meter, so while capturing the block is refreshed every other tick.
-         * A flush is 53ms of I2C, but the thread sleeps on the DMA for all of
-         * it, so 5Hz costs bus bandwidth rather than CPU.
+         * A flush is up to ~47ms of I2C, but the thread sleeps on the DMA for
+         * all of it, so 5Hz costs bus bandwidth rather than CPU.
          */
         const bool mic_due = mic.capturing() && (tick % 2U) == 0U;
 

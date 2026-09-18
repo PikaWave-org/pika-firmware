@@ -376,13 +376,13 @@ void Ui::draw_home() {
     const int bar_y = cfg_.y + row_h + 4;
     const int bar_w = pika::lcd::ST75160::width - 8;
 
-    cfg_.lcd->frame(4, bar_y, bar_w, bar_h, true);
+    cfg_.lcd->frame<true>(4, bar_y, bar_w, bar_h);
 
     const int inner = bar_w - 2 * bar_inset;
     const int fill = inner * (int) volume_step_ / volume_steps;
 
     if (fill > 0) {
-        cfg_.lcd->rect(4 + bar_inset, bar_y + bar_inset, fill, bar_h - 2 * bar_inset, true);
+        cfg_.lcd->rect<true>(4 + bar_inset, bar_y + bar_inset, fill, bar_h - 2 * bar_inset);
     }
 }
 
@@ -436,7 +436,7 @@ void Ui::draw_record() {
 void Ui::draw() {
     /* The UI owns everything from cfg_.y down, and clearing all of it is
        simpler than tracking which fields shrank since the last draw. */
-    cfg_.lcd->rect(0, cfg_.y, pika::lcd::ST75160::width, pika::lcd::ST75160::height - cfg_.y, false);
+    cfg_.lcd->rect<false>(0, cfg_.y, pika::lcd::ST75160::width, pika::lcd::ST75160::height - cfg_.y);
 
     switch (screen_) {
     case Screen::home:

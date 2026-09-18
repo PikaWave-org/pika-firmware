@@ -3,7 +3,7 @@
 
 #include "ST75160.h"
 
-#include <pika/lcd/Font8x8.h>
+#include <algorithm>
 
 namespace pika::lcd {
 namespace {
@@ -62,19 +62,6 @@ const uint8_t init_script[] = {
         CMD(0xCA),  PAR(0x00), PAR(0x63), PAR(0x00), /* display control, 100 duty  */
         CMD(0x30),                                   /* extension command set 1      */
         CMD(0xAF)                                    /* display on                   */
-};
-
-/*
- * Addressing preamble sent before every frame. 0x5C rewinds the column and
- * page counters to the start of the window, after which the column address
- * auto-increments per byte and rolls over into the next page, so the whole
- * frame is one stream.
- */
-const uint8_t frame_addr[] = {
-        CMD(0x30),                                     /* extension command set 1      */
-        CMD(0x15), PAR(0x00), PAR(0x9F),               /* columns 0..159               */
-        CMD(0x75), PAR(0x00), PAR(ST75160::pages - 1), /* pages 0..12                  */
-        CMD(0x5C)                                      /* write data                   */
 };
 
 /*
@@ -212,80 +199,20 @@ bool ST75160::init() {
 void ST75160::clear(bool on) {
     uint8_t v = on ? 0xFFU : 0x00U;
     for (unsigned i = 0U; i < fb_size; i++) { fb_[i] = v; }
+    dirty_first_ = 0;
+    dirty_last_ = pages - 1;
 }
 
-void ST75160::pixel(int x, int y, bool on) {
-    if ((x < 0) || (x >= width) || (y < 0) || (y >= height)) {
-        return;
-    }
-
-    /* The panel's rows run bottom to top as far as the controller is
-     concerned, so y is flipped here and the API above is a plain top-left
-     origin. The controller has no command for this: 0xBC only covers the
-     address scan direction and the column order.*/
-    y = height - 1 - y;
-
-    /* One byte covers 8 rows of one column, D7 being the topmost row.*/
-    uint8_t mask = (uint8_t) (1U << (7 - (y & 7)));
-    uint8_t *p = &fb_[((unsigned) y / 8U) * width + (unsigned) x];
-
-    if (on) {
-        *p |= mask;
-    } else {
-        *p &= (uint8_t) ~mask;
-    }
-}
-
-void ST75160::rect(int x, int y, int w, int h, bool on) {
-    for (int j = y; j < (y + h); j++) {
-        for (int i = x; i < (x + w); i++) { pixel(i, j, on); }
-    }
-}
-
-void ST75160::frame(int x, int y, int w, int h, bool on) {
-    for (int i = x; i < (x + w); i++) {
-        pixel(i, y, on);
-        pixel(i, y + h - 1, on);
-    }
-    for (int j = y; j < (y + h); j++) {
-        pixel(x, j, on);
-        pixel(x + w - 1, j, on);
-    }
-}
-
-void ST75160::bitmap(int x, int y, int w, int h, const uint8_t *bits, bool on) {
-    const int stride = (w + 7) / 8;
-
-    for (int row = 0; row < h; row++) {
-        const uint8_t *line = &bits[(size_t) row * (size_t) stride];
-        for (int col = 0; col < w; col++) {
-            if (((line[col / 8] >> (7 - (col & 7))) & 1U) != 0U) {
-                pixel(x + col, y + row, on);
-            }
-        }
-    }
-}
-
-int ST75160::text(int x, int y, const char *s, bool on) {
-    for (; *s != '\0'; s++) {
-        char c = *s;
-        if ((c < font8x8_first) || (c > font8x8_last)) {
-            c = '?';
-        }
-
-        const uint8_t *glyph = font8x8[c - font8x8_first];
-        for (int row = 0; row < 8; row++) {
-            uint8_t bits = glyph[row];
-            for (int col = 0; col < 8; col++) {
-                if (((bits >> col) & 1U) != 0U) {
-                    pixel(x + col, y + row, on);
-                }
-            }
-        }
-        x += 8;
-    }
-
-    return x;
+/*
+ * Pages are clamped rather than rows clipped: a block partly off the panel
+ * marks the pages it reaches, one entirely off marks a strip at that edge,
+ * which costs a needless page on the next flush and nothing else. Columns are
+ * not looked at for the same reason.
+ */
+void ST75160::mark_rows(int y, int h) {
+    /* The flip in set_pixel() puts the top row on the highest page. */
+    dirty_first_ = std::min(dirty_first_, std::max((height - y - h) / 8, 0));
+    dirty_last_ = std::max(dirty_last_, std::min((height - 1 - y) / 8, pages - 1));
 }
 
 bool ST75160::flush() {
@@ -293,11 +220,41 @@ bool ST75160::flush() {
         return false;
     }
 
-    if (!run_co1(frame_addr, sizeof frame_addr)) {
+    if (dirty_first_ > dirty_last_) {
+        return true;
+    }
+
+    /* Window the pending pages across the full width. 0x5C rewinds the column
+       and page counters to the start of the window, after which the column
+       address auto-increments per byte and rolls over into the next page, so
+       the pages go out as one stream. */
+    const uint8_t addr[] = {
+            CMD(0x30),                            /* extension command set 1 */
+            CMD(0x15), PAR(0x00), PAR(width - 1), /* columns 0..159          */
+            CMD(0x75), PAR(dirty_first_), PAR(dirty_last_),      /* pending pages           */
+            CMD(0x5C)                             /* write data              */
+    };
+    if (!run_co1(addr, sizeof addr)) {
         return false;
     }
 
-    return xfer(frame_tx, sizeof frame_tx, TIME_MS2I(500));
+    /* The stream needs a leading control byte. The byte in front of the first
+       pending page is already in the .nocache buffer - frame_tx[0], which holds
+       ctrl_data, or the last byte of a page that is not being sent - so it is
+       borrowed and put back rather than copying the pages to a staging buffer.
+       Put back on failure too, or the retry would paint 0x40 onto the panel. */
+    uint8_t *p = &frame_tx[(unsigned) dirty_first_ * width];
+    const uint8_t saved = *p;
+    *p = ctrl_data;
+    const bool ok = xfer(p, (size_t) (dirty_last_ - dirty_first_ + 1) * width + 1U, TIME_MS2I(500));
+    *p = saved;
+
+    /* Only on success, so a failed flush is retried rather than dropped. */
+    if (ok) {
+        dirty_first_ = pages;
+        dirty_last_ = -1;
+    }
+    return ok;
 }
 
 /*
