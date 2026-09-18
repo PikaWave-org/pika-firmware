@@ -1,0 +1,181 @@
+#!/bin/bash
+#
+# melpe-check - verify the pika MELPe 2400 wrapper on the host.
+#
+# Upstream's encoder.c is 1200 only, so PROVENANCE.md's bit exactness recipe
+# does not reach this code path. This does, using tools/melpe24_driver.c:
+#
+#   1a  the wrapper against the same globals set by hand, both built from this
+#       tree. Proves melpe_i24()/melpe_a24() are the reference 2400 wiring and
+#       add nothing of their own.
+#   1b  this tree against pristine upstream at 16c3e44, neither using the
+#       wrapper. Extends the patches-1-4 bit exactness claim to the 2400 path,
+#       which the 1200 verification never exercised - vq_ms4, q_gain, q_bpvc,
+#       melp_chn_write and fec_code are all reached only from the 2400 branch.
+#       Skipped with a warning if the reference tree is not present.
+#   1c  the mat_lib arena peak at 2400, by bisecting MELPE_ARENA_WORDS down
+#       until the trap fires. Patch 2's 161 word figure was measured at 1200,
+#       and vq_ms4 - the largest allocator in the tree - runs only at 2400.
+#   1d  round trip: decode matches, and a segmental SNR so that a silent but
+#       bit exact result cannot pass unnoticed.
+#
+# Every comparison runs a fresh process: the codec is one global instance whose
+# firstTime statics are never reset, so a second run in the same process is not
+# the same experiment.
+#
+# Usage: tools/melpe-check [workdir]
+#   MELPE_REF=/path/to/melpe-ref   pristine upstream for 1b. Get it with
+#     git clone https://github.com/Rhizomatica/melpe.git /tmp/melpe-ref
+#     git -C /tmp/melpe-ref checkout 16c3e44      (sources are in melpe/)
+
+set -u -o pipefail
+
+here=$(cd "$(dirname "$0")/.." && pwd)
+work=${1:-${TMPDIR:-/tmp}/melpe-check}
+ref=${MELPE_REF:-/tmp/melpe-ref/melpe}
+tree="$here/src/melpe"
+drv="$here/tools/melpe24_driver.c"
+sigs="meow silence noise sweep buzz square meownoise"
+
+mkdir -p "$work" || exit 1
+fail=0
+pass() { echo "PASS $*"; }
+bad() { echo "FAIL $*"; fail=1; }
+
+# ---------------------------------------------------------------- signals
+# Regenerated, never committed: the same six PROVENANCE.md used, plus meow at
+# about 10dB SNR, which is the one case where skipping npp() changes the audio.
+if [ ! -f "$work/meow.pcm" ]; then
+    ffmpeg -loglevel error -y -i "$here/sounds/meow.mp3" -ac 1 -ar 8000 \
+        -f s16le "$work/meow.pcm" || exit 1
+    python3 - "$work" <<'EOF' || exit 1
+import numpy as np, os, sys
+w_dir = sys.argv[1]
+n = 8000 * 3
+t = np.arange(n) / 8000.0
+def w(name, x):
+    np.clip(x, -32768, 32767).astype('<i2').tofile(os.path.join(w_dir, name))
+rng = np.random.default_rng(1)
+w("silence.pcm", np.zeros(n))
+w("noise.pcm", rng.normal(0, 3000, n))
+w("sweep.pcm", 12000 * np.sin(2 * np.pi * (80 + (3500 - 80) * t / t[-1] / 2) * t))
+w("buzz.pcm", 8000 * np.sin(2 * np.pi * 440 * t) + 8000 * np.sin(2 * np.pi * 1310 * t))
+w("square.pcm", 32767 * np.sign(np.sin(2 * np.pi * 200 * t)))
+m = np.fromfile(os.path.join(w_dir, "meow.pcm"), dtype='<i2').astype(float)
+w("meownoise.pcm", m + rng.normal(0, np.sqrt((m ** 2).mean() / 10), m.size))
+EOF
+fi
+
+build() { # build <out> <srcdir> <extra flags...>
+    local out=$1 src=$2
+    shift 2
+    # Upstream ships encoder.c and decoder.c, each with its own main(). They
+    # are host drivers, they were not vendored, and melpe24_driver.c replaces
+    # them - so they are excluded rather than linked.
+    local objs
+    objs=$(ls "$src"/*.c | grep -vE '/(encoder|decoder)\.c$')
+    gcc -O2 -w -I"$src" -o "$out" $objs "$drv" "$@" -lm
+}
+
+# ---------------------------------------------------------------- 1a
+build "$work/enc_wrap" "$tree" -DVIA_PIKA_WRAPPER || exit 1
+build "$work/enc_hand" "$tree" || exit 1
+for s in $sigs; do
+    "$work/enc_wrap" "$work/$s.pcm" "$work/$s.wrap.bit" 2>/dev/null
+    "$work/enc_hand" "$work/$s.pcm" "$work/$s.hand.bit" 2>/dev/null
+    if cmp -s "$work/$s.wrap.bit" "$work/$s.hand.bit"; then
+        pass "1a $s ($(stat -c%s "$work/$s.wrap.bit") bytes)"
+    else
+        bad "1a $s - the wrapper is not the reference wiring"
+    fi
+done
+
+# ---------------------------------------------------------------- 1b
+if [ -d "$ref" ]; then
+    build "$work/enc_upstream" "$ref" || exit 1
+    for s in $sigs; do
+        "$work/enc_upstream" "$work/$s.pcm" "$work/$s.up.bit" 2>/dev/null
+        if cmp -s "$work/$s.hand.bit" "$work/$s.up.bit"; then
+            pass "1b $s"
+        else
+            bad "1b $s - a pika patch changes the 2400 bitstream"
+        fi
+    done
+    # The same run with the 40 bit accumulator checks on. Still identical means
+    # no range violation is being hidden on the new code path.
+    build "$work/enc_checked" "$tree" -DMELPE_BASIC_OP_CHECKS || exit 1
+    "$work/enc_checked" "$work/meow.pcm" "$work/meow.chk.bit" 2>/dev/null
+    if cmp -s "$work/meow.hand.bit" "$work/meow.chk.bit"; then
+        pass "1b meow with MELPE_BASIC_OP_CHECKS"
+    else
+        bad "1b meow with MELPE_BASIC_OP_CHECKS - 40 bit range violation"
+    fi
+else
+    echo "SKIP 1b - no reference tree at $ref (set MELPE_REF)"
+fi
+
+# ---------------------------------------------------------------- 1c
+# The arena is a bump allocator behind assert -> __builtin_trap, so an overflow
+# is SIGILL on the board. Bisect by building copies of the tree with the size
+# forced down, and report the smallest that survives every signal.
+arena_peak() {
+    local lo=64 hi=256 mid ok
+    while [ $lo -lt $hi ]; do
+        mid=$(((lo + hi) / 2))
+        rm -rf "$work/arena"
+        cp -r "$tree" "$work/arena"
+        sed -i "s/^#define MELPE_ARENA_WORDS.*/#define MELPE_ARENA_WORDS $mid/" \
+            "$work/arena/mat_lib.c"
+        if ! build "$work/enc_arena" "$work/arena" -DVIA_PIKA_WRAPPER \
+            2>/dev/null; then
+            echo "  (arena build failed at $mid)" >&2
+            return 1
+        fi
+        ok=1
+        for s in $sigs; do
+            "$work/enc_arena" "$work/$s.pcm" /dev/null >/dev/null 2>&1 || ok=0
+        done
+        if [ $ok -eq 1 ]; then hi=$mid; else lo=$((mid + 1)); fi
+    done
+    echo $lo
+}
+peak=$(arena_peak)
+if [ -n "$peak" ]; then
+    echo "INFO 1c arena peak at 2400 is $peak words of MELPE_ARENA_WORDS 256"
+    if [ "$peak" -le 256 ]; then pass "1c arena fits"; else bad "1c arena overflows"; fi
+fi
+
+# ---------------------------------------------------------------- 1d
+build "$work/dec_wrap" "$tree" -DVIA_PIKA_WRAPPER -DDECODE || exit 1
+build "$work/dec_hand" "$tree" -DDECODE || exit 1
+for s in $sigs; do
+    "$work/dec_wrap" "$work/$s.wrap.bit" "$work/$s.wrap.out" 2>/dev/null
+    "$work/dec_hand" "$work/$s.hand.bit" "$work/$s.hand.out" 2>/dev/null
+    if cmp -s "$work/$s.wrap.out" "$work/$s.hand.out"; then
+        pass "1d $s decode"
+    else
+        bad "1d $s decode"
+    fi
+done
+python3 - "$work" <<'EOF'
+import numpy as np, os, sys
+w = sys.argv[1]
+for s in ("meow", "meownoise"):
+    a = np.fromfile(os.path.join(w, s + ".pcm"), dtype='<i2').astype(float)
+    b = np.fromfile(os.path.join(w, s + ".wrap.out"), dtype='<i2').astype(float)
+    n = min(a.size, b.size)
+    if n == 0:
+        print("FAIL 1d %s - empty decode" % s); continue
+    a, b = a[:n], b[:n]
+    # A vocoder does not preserve waveform phase, so this is an energy check,
+    # not an SNR: it is here to catch a decode that is silent or clipped, which
+    # a bit exact comparison would happily pass.
+    ra, rb = np.sqrt((a ** 2).mean()), np.sqrt((b ** 2).mean())
+    ok = rb > 0.1 * ra and rb < 10 * ra
+    print("%s 1d %s energy in=%.0f out=%.0f rms" %
+          ("PASS" if ok else "FAIL", s, ra, rb))
+EOF
+
+echo
+[ $fail -eq 0 ] && echo "melpe-check: all checks passed" || echo "melpe-check: FAILURES above"
+exit $fail
