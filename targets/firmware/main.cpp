@@ -8,6 +8,7 @@
 
 #include <pika/audio/ADCMicrophone.h>
 #include <pika/audio/DACSpeaker.h>
+#include <pika/audio/MelpRecorder.h>
 #include <pika/audio/MicLevel.h>
 #include <pika/audio/PCMPlayer.h>
 #include <pika/audio/sounds/meow.h>
@@ -53,61 +54,23 @@ static pika::audio::ADCMicrophone mic{mic_cfg};
 static pika::audio::PCMPlayer pcm_player;
 static pika::audio::ToneGenerator tone_gen;
 
-/* A second player for the replay: play() repoints its clip before the sink's
-   busy check, so one shared with the test sound would switch a running replay
-   over to the meow rather than refuse it. */
-static pika::audio::PCMPlayer rec_player;
-
 /*
- * The recording, and the flags the capture callback and the heartbeat pass
- * between them. Four seconds is 256000 bytes: .data and .bss end under 15K
- * into the 320K of AXI SRAM, so this leaves about 55K, and nothing in this
- * tree allocates from the heap that occupies the rest. It is by far the
- * largest object on the board - if something later needs room, this constant
- * is the first thing to shrink and it is one line.
+ * The recording: a MELPe 2400 bitstream, encoded as it is captured and decoded
+ * on the way back out, so no raw samples are ever stored. A minute costs
+ * 18.7KB where four seconds of PCM used to cost 250KB - the buffer that was by
+ * far the largest object on the board is gone, and with it most of the reason
+ * to keep recordings short.
  *
- * Plain .bss, deliberately not DMA_BUF/.nocache like every other audio buffer
- * here: no DMA controller ever sees it. The ADC's DMA fills the driver's own
- * buffer, this is filled by a CPU copy in the capture callback and drained by
- * a CPU copy in the playback callback, so the D-cache is coherent with itself
- * and needs no MPU window. It would not fit in the 16K .nocache region anyway.
- */
-constexpr uint32_t record_capacity = 4U * pika::audio::SampleClock::rate;
-
-int16_t record_buf[record_capacity];
-
-uint32_t volatile record_len; /* Samples recorded; written in the DMA IRQ.  */
-bool volatile record_arm;     /* The heartbeat asking the IRQ to append.    */
-bool volatile record_full;    /* The IRQ reached the end of the buffer.     */
-
-/*
- * Appends captured blocks to the recording while armed. It sits behind the
- * level meter, which keeps running through a recording, so arming starts on
- * the next 8ms block without the capture being touched.
+ * It sits behind the level meter, which keeps running through a recording, so
+ * starting one does not touch the capture.
  *
- * The end of the buffer is handled here because stop_capture() cannot be
- * called from an interrupt; the heartbeat reads record_full.
+ * The working area is generous because the codec's stack appetite is not
+ * documented anywhere upstream; melp_rec.stack_free() reports what it actually
+ * used and the log line at the end of a recording prints it.
  */
-class Recorder : public pika::audio::AudioConsumer {
-public:
-    /* Runs in the DMA interrupt: a copy and nothing else. */
-    void take_audio_buffer(std::span<const int16_t> buf) override {
-        if (record_full) {
-            return;
-        }
+static pika::audio::MelpRecorder melp_rec;
+static THD_WORKING_AREA(waMelp, 8192);
 
-        const size_t n = std::min(buf.size(), (size_t) (record_capacity - record_len));
-
-        std::copy_n(buf.begin(), n, &record_buf[record_len]);
-        record_len += n;
-
-        if (n < buf.size()) {
-            record_full = true;
-        }
-    }
-};
-
-static Recorder recorder;
 static pika::audio::MicLevel mic_level;
 
 /*
@@ -169,8 +132,9 @@ static unsigned rec_ticks;
 /* Volume to put back after the replay, see serve_record(). */
 static float rec_volume;
 
-/* Tenths of a second of recording, for the screen. */
-static unsigned record_tenths() { return (unsigned) (record_len / (pika::audio::SampleClock::rate / 10U)); }
+/* Tenths of a second of recording, for the screen. Counted in codec frames of
+   22.5ms now, not in samples: nothing stores samples any more. */
+static unsigned record_tenths() { return (unsigned) melp_rec.tenths(); }
 
 /*
  * The record screen's second row. Called from the UI's draw(), which runs on
@@ -187,8 +151,13 @@ static const char *record_status() {
 
     switch (rec_state) {
         case Rec::recording:
-            chsnprintf(text, sizeof text, record_full ? "rec %u.%us FULL" : "rec %u.%us", record_tenths() / 10U,
-                       record_tenths() % 10U);
+            /* An overrun outranks FULL: running out of buffer is the feature
+               working as designed, a dropped frame is the codec having missed
+               its deadline, and only one of those wants looking at. */
+            chsnprintf(text, sizeof text,
+                       melp_rec.overruns() != 0U ? "rec %u.%us !ovr"
+                                                 : (melp_rec.full() ? "rec %u.%us FULL" : "rec %u.%us"),
+                       record_tenths() / 10U, record_tenths() % 10U);
             break;
 
         case Rec::waiting:
@@ -196,7 +165,7 @@ static const char *record_status() {
             break;
 
         case Rec::idle:
-            if (record_len == 0U) {
+            if (melp_rec.frames() == 0U) {
                 return "ready";
             }
 
@@ -329,9 +298,7 @@ static bool serve_record() {
                 return false;
             }
 
-            record_len = 0U;
-            record_full = false;
-            record_arm = true;
+            melp_rec.start_record();
             rec_state = Rec::recording;
             LOG("rec: recording");
             break;
@@ -341,13 +308,11 @@ static bool serve_record() {
                 break;
             }
 
-            record_arm = false;
-            LOG("rec: %u samples%s", (unsigned) record_len, record_full ? " (full)" : "");
-
-            if (record_len == 0U) {
-                rec_state = Rec::idle;
-                return false;
-            }
+            /* The tail of the recording is still in flight: the interrupt may
+               hold a part frame and the codec thread up to eight whole ones.
+               Whether there is anything to replay is therefore not knowable
+               here - Rec::waiting settles it once the thread reports idle. */
+            melp_rec.stop_record();
 
             rec_ticks = replay_delay_ticks;
             rec_state = Rec::waiting;
@@ -360,6 +325,27 @@ static bool serve_record() {
             if (rec_ticks > 0U) {
                 rec_ticks--;
                 break;
+            }
+
+            /* Two things are in flight at the end of a recording, not one. The
+               delay above has always covered an interrupt mid-block; the codec
+               thread holding up to eight queued frames is new, and 180ms of it
+               would otherwise be encoded after the replay had started reading.
+               So wait for the thread rather than assume the delay covered it. */
+            if (!melp_rec.idle()) {
+                break;
+            }
+
+            LOG("rec: %u frames, %u.%us, %u bytes, encode mean %uus max %uus, "
+                "%u overruns, stack free %u",
+                (unsigned) melp_rec.frames(), record_tenths() / 10U, record_tenths() % 10U,
+                (unsigned) melp_rec.bytes(), (unsigned) melp_rec.encode_mean_us(),
+                (unsigned) melp_rec.encode_max_us(), (unsigned) melp_rec.overruns(),
+                (unsigned) melp_rec.stack_free());
+
+            if (melp_rec.frames() == 0U) {
+                rec_state = Rec::idle;
+                return false;
             }
 
             if (mic.capturing()) {
@@ -383,7 +369,7 @@ static bool serve_record() {
                 break;
             }
 
-            if (!rec_player.play(spk, {record_buf, record_len})) {
+            if (!melp_rec.replay(spk)) {
                 LOG("rec: replay rejected");
                 spk.set_volume(rec_volume);
                 rec_state = Rec::idle;
@@ -394,7 +380,13 @@ static bool serve_record() {
             break;
 
         case Rec::replay:
-            if (spk.busy()) {
+            /* playing() as well as busy(), and it has to come first. The codec
+               thread primes the ring and starts the stream, so for a tick or
+               two after replay() returns the speaker is legitimately not busy
+               yet - waiting on busy() alone would read that as a replay that
+               had already finished. replay() raises playing() before it
+               returns, and the source lowers it when it ends the stream. */
+            if (melp_rec.playing() || spk.busy()) {
                 break;
             }
 
@@ -403,6 +395,10 @@ static bool serve_record() {
                plays. */
             if (spk.last_error() != 0U) {
                 LOG("rec: speaker error 0x%08x", (unsigned) spk.last_error());
+            }
+
+            if (melp_rec.underruns() != 0U) {
+                LOG("rec: %u decode underruns", (unsigned) melp_rec.underruns());
             }
 
             tone_gen.tone(spk, beep_out_hz, beep_gain, beep_out_s);
@@ -709,8 +705,14 @@ int main() {
     /* Nothing is captured here. The heartbeat starts the microphone once it is
        running and hands the clock back whenever the speaker wants it, so boot
        is not held up waiting for a preamp to settle. */
+    /* The codec thread has to exist before the microphone can deliver to it:
+       the capture interrupt signals it by handle. Above NORMALPRIO because it
+       is the only thread here with a deadline - 22.5ms per frame - and the
+       others block on DMA rather than spin. */
+    melp_rec.start(NORMALPRIO + 1, waMelp, sizeof(waMelp));
+
     mic.add_consumer(mic_level);
-    mic.add_consumer(recorder);
+    mic.add_consumer(melp_rec);
     mic_ready = mic.init();
     LOG("mic: init %s", mic_ready ? "ok" : "failed");
 
