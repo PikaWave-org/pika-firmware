@@ -136,9 +136,29 @@ cannot pass. All of it passed on 2026-09-19.
 ## Cost on the board
 
 Built `-O2` for Cortex-M7 (see `cmake/melpe.cmake` for why the level is
-forced): **228KB flash, 26KB RAM**, the RAM mostly `npp.c`'s noise
-preprocessor state. `-Os` costs 186KB flash instead, untimed.
+forced). The whole library is **228KB flash, 26KB RAM**; what a firmware image
+actually pays is less, because `--gc-sections` drops what nothing calls.
 
-Nothing calls the codec yet. It is linked into the firmware image, but
-`--gc-sections` drops every object with no caller, so today it adds nothing —
-the measured firmware is byte-identical with and without it.
+`pika::audio::MelpRecorder` calls it at 2400, and measured in that image the
+codec accounts for **186KB of flash and 10.9KB of RAM** — 106.6KB text, 79.2KB
+rodata, 10.9KB bss. The 15KB of RAM that is not there is `npp.c`: patch 6 does
+not call the noise preprocessor, `melpe_n()`/`melpe_a()` are its only other
+callers and nothing calls those either, so the whole object goes. That is worth
+re-checking after any change here, because nothing warns when it stops being
+true:
+
+    arm-none-eabi-nm build/targets/firmware/firmware.elf | grep -i npp
+
+should find nothing.
+
+What does **not** go is `qnt12.c` and `qnt12_cb.c`, about 74KB of the flash
+above: they are the 1200 bps quantizers, they are referenced from the `else`
+branches inside `analysis()`, and `--gc-sections` works on references rather
+than on reachable paths. Dropping them would mean `#if`-ing the 1200 branches
+out, not a linker flag. Nobody needs to re-derive that; it is written down here
+so that it stays derived.
+
+To measure it again: the map file lists discarded sections as well as kept
+ones and over-counts by more than a megabyte, so take the symbols
+`libmelpe.a` defines, intersect them with `arm-none-eabi-nm -S` over the ELF,
+and sum the survivors.
