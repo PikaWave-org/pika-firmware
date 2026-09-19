@@ -37,7 +37,14 @@ static THD_FUNCTION(heartbeat, arg) {
  *
  * Fed from a clip, not the microphone: the converters run at 32kHz, so a mic
  * fed bench would measure the resampler too and have nothing on the host to
- * equal. meow8k is what tools/melpe-check encodes.
+ * equal.
+ *
+ * To compare the CRC, encode the same samples on the host - and they have to
+ * be the same samples. wav2cpp.py does its own resampling and normalises to
+ * -1 dBFS, so an ffmpeg extraction of meow.mp3 is a different signal and
+ * gives a different, perfectly correct, CRC. Dump the generated array from
+ * build/generated_src/pika/audio/sounds/meow8k.cpp to s16le, run it through
+ * tools/melpe24_driver.c, and CRC the first melp_frames * 7 bytes.
  */
 namespace {
 
@@ -131,6 +138,19 @@ size_t stack_free(const void *wa, size_t size) {
   return i;
 }
 
+/* chSysGetRealtimeCounterX() is DWT->CYCCNT, and on this M7 the DWT comes up
+   locked, so the port's own enable silently does nothing and every reading is
+   zero. Unlock, then enable, then check it actually moves. */
+bool dwt_init() {
+  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+  DWT->LAR = 0xC5ACCE55U;
+  DWT->CYCCNT = 0U;
+  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+
+  const uint32_t a = DWT->CYCCNT;
+  return DWT->CYCCNT != a;
+}
+
 /* Outside every timed region: LOG() at 115200 baud would dominate it. */
 void report(const char *what, const Stats &s) {
   LOG("melpe24: %s n=%u min=%uus mean=%uus max=%uus (%u%% of 22500us)", what,
@@ -146,8 +166,13 @@ static THD_FUNCTION(bench, arg) {
   (void)arg;
   chRegSetThreadName("melpe-bench");
 
-  LOG("melpe24: %u frames of %u samples, core %u Hz", (unsigned)melp_frames,
-      (unsigned)melp_frame, (unsigned)STM32_CORE_CK);
+  /* tools/hw check flashes, resets, and only then opens the VCOM, so anything
+     logged in the first second or so of a boot is never captured. */
+  chThdSleepMilliseconds(3000);
+
+  LOG("melpe24: %u frames of %u samples, core %u Hz, cycle counter %s",
+      (unsigned)melp_frames, (unsigned)melp_frame, (unsigned)STM32_CORE_CK,
+      dwt_init() ? "running" : "DEAD - timings below are meaningless");
 
   /* Twice: the first pass pays for cold I-cache over 190KB of codec, which is
      the margin at the first frame after a press; the second is steady state. */
@@ -159,8 +184,12 @@ static THD_FUNCTION(bench, arg) {
   report("encode pass2", enc_stats);
   const uint32_t crc2 = crc32(melp_bits, sizeof(melp_bits));
 
-  LOG("melpe24: crc=%08x %s", (unsigned)crc1,
-      crc1 == crc2 ? "(stable)" : "(UNSTABLE between passes)");
+  /* The two CRCs differ, and should: melpe_i24() clears hpspeech, the pitch
+     tracks and the synthesis carry, but not the one shot firstTime statics,
+     so pass 2 does not start where pass 1 did. Only pass 1 begins from a cold
+     boot, so it is the one to compare against a fresh host process. */
+  LOG("melpe24: crc pass1=%08x pass2=%08x (pass1 is the host comparable one)",
+      (unsigned)crc1, (unsigned)crc2);
 
   decode_pass();
   report("decode", dec_stats);
