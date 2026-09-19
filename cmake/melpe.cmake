@@ -1,13 +1,13 @@
-# MELPe 1200 bps speech codec, vendored in src/melpe/.
+# MELPe speech codec, vendored in src/melpe/. Upstream wraps 1200 bps; patch 6
+# adds the 2400 bps entry points, which is the rate the board records at.
 #
 # Built as a static library rather than folded into the firmware sources: it
 # is third party C that we do not want compiled with our warning flags, and
 # keeping it separate makes the one place its compile options are set obvious.
 #
-# Nothing links it in yet beyond the firmware image, and --gc-sections drops
-# every object nobody calls, so carrying it costs no flash until the first
-# caller appears. When one does, expect roughly 188KB of flash and 27KB of
-# RAM (the codebooks are const and live in flash; the RAM is npp's state).
+# Measured in the firmware image that calls it: 186KB of flash and 10.9KB of
+# RAM. The codebooks are const and live in flash, and npp() is dropped by
+# --gc-sections, which is most of the gap to the library's own 26KB.
 #
 # The file list is spelled out for the same reason the ChibiOS one is: a glob
 # does not re-run when a file appears, and this set only changes when we pull
