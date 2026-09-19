@@ -56,17 +56,11 @@ static pika::audio::ToneGenerator tone_gen;
 
 /*
  * The recording: a MELPe 2400 bitstream, encoded as it is captured and decoded
- * on the way back out, so no raw samples are ever stored. A minute costs
- * 18.7KB where four seconds of PCM used to cost 250KB - the buffer that was by
- * far the largest object on the board is gone, and with it most of the reason
- * to keep recordings short.
+ * on the way back out, so no raw samples are stored. A minute costs 18.7KB
+ * where four seconds of PCM used to cost 250KB.
  *
  * It sits behind the level meter, which keeps running through a recording, so
  * starting one does not touch the capture.
- *
- * The working area is generous because the codec's stack appetite is not
- * documented anywhere upstream; melp_rec.stack_free() reports what it actually
- * used and the log line at the end of a recording prints it.
  */
 static pika::audio::MelpRecorder melp_rec;
 static THD_WORKING_AREA(waMelp, 8192);
@@ -151,9 +145,8 @@ static const char *record_status() {
 
     switch (rec_state) {
         case Rec::recording:
-            /* An overrun outranks FULL: running out of buffer is the feature
-               working as designed, a dropped frame is the codec having missed
-               its deadline, and only one of those wants looking at. */
+            /* An overrun outranks FULL: running out of buffer is by design, a
+               dropped frame is a missed deadline. */
             chsnprintf(text, sizeof text,
                        melp_rec.overruns() != 0U ? "rec %u.%us !ovr"
                                                  : (melp_rec.full() ? "rec %u.%us FULL" : "rec %u.%us"),
@@ -308,10 +301,8 @@ static bool serve_record() {
                 break;
             }
 
-            /* The tail of the recording is still in flight: the interrupt may
-               hold a part frame and the codec thread up to eight whole ones.
-               Whether there is anything to replay is therefore not knowable
-               here - Rec::waiting settles it once the thread reports idle. */
+            /* The tail is still in flight, so whether there is anything to
+               replay is not knowable here; Rec::waiting settles it. */
             melp_rec.stop_record();
 
             rec_ticks = replay_delay_ticks;
@@ -327,21 +318,16 @@ static bool serve_record() {
                 break;
             }
 
-            /* Two things are in flight at the end of a recording, not one. The
-               delay above has always covered an interrupt mid-block; the codec
-               thread holding up to eight queued frames is new, and 180ms of it
-               would otherwise be encoded after the replay had started reading.
-               So wait for the thread rather than assume the delay covered it. */
+            /* The delay above covers an interrupt mid-block; the codec thread
+               holding up to eight queued frames is a second hazard it does
+               not, so wait for it rather than assume. */
             if (!melp_rec.idle()) {
                 break;
             }
 
-            LOG("rec: %u frames, %u.%us, %u bytes, encode mean %uus max %uus, "
-                "%u overruns, stack free %u",
-                (unsigned) melp_rec.frames(), record_tenths() / 10U, record_tenths() % 10U,
-                (unsigned) melp_rec.bytes(), (unsigned) melp_rec.encode_mean_us(),
-                (unsigned) melp_rec.encode_max_us(), (unsigned) melp_rec.overruns(),
-                (unsigned) melp_rec.stack_free());
+            LOG("rec: %u frames, %u.%us, %u bytes, %u overruns", (unsigned) melp_rec.frames(),
+                record_tenths() / 10U, record_tenths() % 10U, (unsigned) melp_rec.bytes(),
+                (unsigned) melp_rec.overruns());
 
             if (melp_rec.frames() == 0U) {
                 rec_state = Rec::idle;
@@ -380,12 +366,9 @@ static bool serve_record() {
             break;
 
         case Rec::replay:
-            /* playing() as well as busy(), and it has to come first. The codec
-               thread primes the ring and starts the stream, so for a tick or
-               two after replay() returns the speaker is legitimately not busy
-               yet - waiting on busy() alone would read that as a replay that
-               had already finished. replay() raises playing() before it
-               returns, and the source lowers it when it ends the stream. */
+            /* playing() as well as busy(): the codec thread starts the stream,
+               so for a tick after replay() returns the speaker is not busy
+               yet, which busy() alone would read as a finished replay. */
             if (melp_rec.playing() || spk.busy()) {
                 break;
             }
@@ -705,10 +688,8 @@ int main() {
     /* Nothing is captured here. The heartbeat starts the microphone once it is
        running and hands the clock back whenever the speaker wants it, so boot
        is not held up waiting for a preamp to settle. */
-    /* The codec thread has to exist before the microphone can deliver to it:
-       the capture interrupt signals it by handle. Above NORMALPRIO because it
-       is the only thread here with a deadline - 22.5ms per frame - and the
-       others block on DMA rather than spin. */
+    /* Before mic.init(): the capture interrupt signals this thread by handle.
+       Above NORMALPRIO because it is the only one here with a deadline. */
     melp_rec.start(NORMALPRIO + 1, waMelp, sizeof(waMelp));
 
     mic.add_consumer(mic_level);

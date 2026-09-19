@@ -1,28 +1,19 @@
 /*
- * melpe24_driver - a host side MELPe 2400 encoder/decoder, for checking the
- * pika 2400 wrapper against the reference.
+ * melpe24_driver - host side MELPe 2400 encoder/decoder, for tools/melpe-check.
  *
- * Upstream's own encoder.c is 1200 only and hardcoded (melpe_i(), short
- * spbuf[540], unsigned char txbuf[11]), so PROVENANCE.md's bit exactness
- * recipe cannot be pointed at 2400 as it stands. This replaces it. One source,
- * four switches, so the same file can be built against this tree or against
- * pristine upstream and the outputs compared:
+ * Upstream's encoder.c is 1200 only and hardcoded, so PROVENANCE.md's recipe
+ * cannot be pointed at 2400; this replaces it. One source, built against this
+ * tree or pristine upstream and the outputs compared:
  *
- *   -DVIA_PIKA_WRAPPER  call melpe_i24()/melpe_a24()/melpe_s24()  <- under test
- *   (default)           set the globals by hand and call analysis()/
- *                       synthesis() directly, exactly as the original SC1200
- *                       command line driver does at 2400      <- the reference
- *   -DWITH_NPP          run npp() over each frame first, as the reference
- *                       driver does. The firmware does not; this exists to
- *                       measure what skipping it costs.
- *   -DDECODE            7 bytes -> 180 samples instead of the reverse
+ *   -DVIA_PIKA_WRAPPER  melpe_i24()/melpe_a24()/melpe_s24()   <- under test
+ *   (default)           the same globals set by hand, as the original SC1200
+ *                       driver does at 2400                   <- the reference
+ *   -DWITH_NPP          npp() per frame, as the reference driver does and the
+ *                       firmware does not
+ *   -DDECODE            7 bytes -> 180 samples
  *
- * Build (against either tree):
- *   gcc -O2 -w -I<tree> -o enc <tree>/*.c tools/melpe24_driver.c -lm
- *
- * Note that the codec is a single global instance and its one shot firstTime
- * statics are never reset, so every comparison must start from a fresh
- * process. That is why this is a whole program and not a function.
+ * A whole program rather than a function because the codec's one shot
+ * firstTime statics are never reset, so each comparison needs a fresh process.
  */
 
 #include <stdio.h>

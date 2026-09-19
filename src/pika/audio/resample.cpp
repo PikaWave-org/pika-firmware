@@ -8,25 +8,17 @@ namespace pika::audio {
 namespace {
 
 /*
- * The prototype low pass, committed rather than generated at build time like
- * the sound clips: 256 numbers are not worth a codegen step, and a table that
- * cannot silently change between builds is worth something in a signal path
- * whose failure mode is inaudible.
+ * The prototype low pass, committed rather than generated at build time: a
+ * table that cannot silently change between builds is worth something in a
+ * signal path whose failure mode is inaudible.
  *
  *   scipy.signal.firwin(256, 3700, window=('kaiser', 6.6), fs=32000)
  *
- * Where those three numbers come from. The target is 70dB of stopband: the
- * ADC is 12 bit, so about 72dB of full scale SNR, and alias rejection below
- * the converter's own floor buys nothing measurable. Kaiser's order rule
- * N = (A - 8) / (2.285 * dw) at N = 256 gives a transition of about 540Hz;
- * centring that on the 4kHz fold point puts the cutoff at 3700Hz, and MELPe's
- * band stops at 3.4kHz so nothing useful is inside it. Beta follows from A:
- * 0.5842 * (70 - 21)^0.4 + 0.07886 * (70 - 21) = 6.6.
- *
- * Measured: flat to 3.4kHz, -69dB at 4kHz, -77dB worst case above 4.3kHz,
- * -107dB at the backlight's 10kHz. Coefficients sum to 1, so the filter is
- * unity gain and the decimator needs no scaling; the interpolator multiplies
- * by four because each phase carries a quarter of the sum.
+ * 3700Hz centres the transition on the 4kHz fold point, above MELPe's 3.4kHz
+ * band; beta 6.6 gives the 70dB of stopband that puts the worst alias at the
+ * 12 bit ADC's own floor. Measured: flat to 3.4kHz, -69dB at 4kHz, -107dB at
+ * the backlight's 10kHz. The taps sum to 1, so the decimator needs no scaling
+ * and the interpolator multiplies by four, each phase carrying a quarter.
  */
 constexpr float fir_h[fir_taps] = {
         -0.000021397f, -0.000018154f, -0.000002046f, +0.000021115f, +0.000039000f, +0.000038821f, +0.000015366f,
@@ -68,8 +60,6 @@ constexpr float fir_h[fir_taps] = {
         +0.000021115f, -0.000002046f, -0.000018154f, -0.000021397f,
 };
 
-/* One round and clamp, in one place, because it is the only spot where the
-   float pipeline meets the int16 the rest of the audio path deals in. */
 inline int16_t to_sample(float v) { return (int16_t) std::lround(std::clamp(v, -32768.0f, 32767.0f)); }
 
 }// namespace
@@ -98,8 +88,7 @@ size_t Decimator4::process(std::span<const int16_t> in, std::span<int16_t> out) 
         out[j] = to_sample(acc);
     }
 
-    /* Slide the tail down. The window start advances by 4 per output and so
-       by exactly n per block, which is why the two ends stay in step. */
+    /* The window start advances by 4 per output, so by exactly n per block. */
     std::copy(&work_[n], &work_[n + hist], &work_[0]);
     return outs;
 }

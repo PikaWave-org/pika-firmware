@@ -5,11 +5,9 @@
 # is third party C that we do not want compiled with our warning flags, and
 # keeping it separate makes the one place its compile options are set obvious.
 #
-# pika::audio::MelpRecorder calls it, so it is no longer free: measured in the
-# firmware image, 186KB of flash and 10.9KB of RAM. The codebooks are const and
-# live in flash. --gc-sections still earns its keep - nothing calls npp(), so
-# its 36KB of code and 15.6KB of state go, which is most of the difference
-# between that 10.9KB and the library's own 26KB.
+# Measured in the firmware image that calls it: 186KB of flash and 10.9KB of
+# RAM. The codebooks are const and live in flash, and npp() is dropped by
+# --gc-sections, which is most of the gap to the library's own 26KB.
 #
 # The file list is spelled out for the same reason the ChibiOS one is: a glob
 # does not re-run when a file appears, and this set only changes when we pull

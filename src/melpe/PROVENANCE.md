@@ -68,12 +68,11 @@ marked with a `pika:` comment at the site.
    1KB fixed arena (bump pointer; freeing a block releases everything handed
    out after it, which covers `lsp_to_lpc`'s out-of-order `f0`/`f1` free).
    The 161-word peak was measured, not guessed — at 1200. The 2400 path peaks
-   at **179 words**, measured the same way by `tools/melpe-check` step 1c, and
-   it is the higher of the two: `vq_ms4` (`vq_lib.c:118`) is the largest
-   allocator in the tree at 179 words across seven blocks, and it is reached
-   only from `melp_ana.c:169`, inside the `rate == RATE2400` branch. 77 words
-   of the 256 spare. Worth knowing because an overflow here is patch 5's
-   `assert`, i.e. `__builtin_trap` on the board, not a diagnostic.
+   higher, at **179 of the 256 words**, measured the same way by
+   `tools/melpe-check` step 1c: `vq_ms4` (`vq_lib.c:118`) is the largest
+   allocator in the tree and is reached only from the `RATE2400` branch at
+   `melp_ana.c:169`. It fits, which matters because an overflow here is patch
+   5's `assert`, i.e. `__builtin_trap` on the board.
 3. `mathhalf_i.h` — the nine 40-bit accumulator checks called `fprintf` and
    `exit` from `always_inline` helpers, so they landed at every call site.
    Now `MELPE_CHECK_40`, off unless `MELPE_BASIC_OP_CHECKS` is defined. The
@@ -85,22 +84,18 @@ marked with a `pika:` comment at the site.
    `assert` or `fprintf` links `vfprintf`, and `vfprintf` drags in `malloc`
    and `_sbrk` — which would have quietly undone patch 2.
 6. `melpe.c`, `melpe.h` — `melpe_i24()`, `melpe_a24()`, `melpe_s24()`: the
-   2400 bps entry points, 180 samples (22.5 ms) to 7 bytes. Upstream wraps
-   1200 only. The field values are not invented — they are what the original
-   SC1200 command line driver sets for 2400 — and two details are load
-   bearing. `frameSize` must be `FRAME`, not `BLOCK`: it is read in exactly
-   one place, `synthesis()`'s pitch remainder carry (`melp_syn.c:116-120`),
-   where `BLOCK` copies 540 samples out of a 180 sample frame; copying
-   `melpe_i()` verbatim is the natural mistake and nothing else catches it.
-   And `melpe_a24()` does **not** call `npp()`, unlike `melpe_a()` and unlike
-   the reference driver. The noise preprocessor is a front end, not part of
-   the bitstream, so the output is still a valid MELPe 2400 stream — and
-   leaving it uncalled is what keeps `npp.c`'s 36KB of code and 15.6KB of
-   state out of the image, since `melpe_n()`/`melpe_a()` are its only callers
-   and `--gc-sections` drops all three together. Noisy input encodes worse;
-   that is the trade, and `tools/melpe-check`'s seventh signal exists to hear
-   it. One consequence for callers: without `npp(sp, sp)` the input buffer is
-   never written, so `melpe_a24()` leaves `sp` intact.
+   2400 bps entry points, 180 samples (22.5 ms) to 7 bytes, where upstream
+   wraps 1200 only. The field values are what the original SC1200 driver sets
+   for 2400. Two of them are load bearing. `frameSize` must be `FRAME`, not
+   `BLOCK` — its only reader is `synthesis()`'s pitch remainder carry
+   (`melp_syn.c:116-120`), where `BLOCK` copies 540 samples out of a 180
+   sample frame, and copying `melpe_i()` verbatim is the natural mistake. And
+   `melpe_a24()` does not call `npp()`: the noise preprocessor is a front end
+   rather than part of the bitstream, so the stream is still valid MELPe 2400
+   without it, and leaving it uncalled is what keeps `npp.c` out of the image.
+   Noisy input encodes worse — `tools/melpe-check`'s seventh signal exists to
+   hear that. It also means `melpe_a24()` leaves `sp` intact, unlike
+   `melpe_a()`.
 
 ## Verifying a patch did not change the codec
 
@@ -113,25 +108,20 @@ with the checks re-enabled produced identical bitstreams too, so no 40-bit
 range violation was being hidden.
 
 That check ran at **1200**, because upstream's `encoder.c` is 1200 only and
-hardcoded. It therefore never executed most of what the board now uses:
-`vq_ms4`, `q_gain`, `q_bpvc`, `vq_enc`, `melp_chn_write` and `fec_code` are all
-reached only from the `rate == RATE2400` branch of `analysis()`.
+hardcoded, so it never executed most of what the board now uses: `vq_ms4`,
+`q_gain`, `q_bpvc`, `vq_enc`, `melp_chn_write` and `fec_code` are reached only
+from the `RATE2400` branch of `analysis()`.
 
-`tools/melpe-check` closes that gap and is the thing to run now — it rebuilds
-both trees and compares at 2400 over seven signals, and it subsumes the recipe
-that used to be printed here:
+`tools/melpe-check` closes that gap and subsumes the recipe that used to be
+printed here:
 
     git clone https://github.com/Rhizomatica/melpe.git /tmp/melpe-ref
     git -C /tmp/melpe-ref checkout 16c3e44
     MELPE_REF=/tmp/melpe-ref/melpe tools/melpe-check
 
-It reports four things: **1a** the 2400 wrapper against the same globals set by
-hand, so the wrapper is provably nothing but the reference wiring; **1b** this
-tree against pristine upstream at 2400, with and without
-`MELPE_BASIC_OP_CHECKS`, which is the 2400 extension of the claim above; **1c**
-the arena peak, by bisecting `MELPE_ARENA_WORDS` until the trap fires; **1d**
-the round trip, plus an energy check so a decode that is bit-exact and silent
-cannot pass. All of it passed on 2026-09-19.
+It compares the wrapper against the reference wiring, this tree against
+pristine upstream (with and without `MELPE_BASIC_OP_CHECKS`), the arena peak,
+and the round trip, over seven signals. All of it passed on 2026-09-19.
 
 ## Cost on the board
 
@@ -139,26 +129,19 @@ Built `-O2` for Cortex-M7 (see `cmake/melpe.cmake` for why the level is
 forced). The whole library is **228KB flash, 26KB RAM**; what a firmware image
 actually pays is less, because `--gc-sections` drops what nothing calls.
 
-`pika::audio::MelpRecorder` calls it at 2400, and measured in that image the
-codec accounts for **186KB of flash and 10.9KB of RAM** — 106.6KB text, 79.2KB
-rodata, 10.9KB bss. The 15KB of RAM that is not there is `npp.c`: patch 6 does
-not call the noise preprocessor, `melpe_n()`/`melpe_a()` are its only other
-callers and nothing calls those either, so the whole object goes. That is worth
-re-checking after any change here, because nothing warns when it stops being
-true:
+`pika::audio::MelpRecorder` calls it at 2400, and in that image the codec
+accounts for **186KB of flash and 10.9KB of RAM** (106.6KB text, 79.2KB
+rodata). The 15KB of RAM that is not there is `npp.c`, dropped because patch 6
+does not call the noise preprocessor and nothing calls the two 1200 wrappers
+that would. Nothing warns when that stops being true, so re-check it:
 
     arm-none-eabi-nm build/targets/firmware/firmware.elf | grep -i npp
 
-should find nothing.
-
 What does **not** go is `qnt12.c` and `qnt12_cb.c`, about 74KB of the flash
-above: they are the 1200 bps quantizers, they are referenced from the `else`
-branches inside `analysis()`, and `--gc-sections` works on references rather
-than on reachable paths. Dropping them would mean `#if`-ing the 1200 branches
-out, not a linker flag. Nobody needs to re-derive that; it is written down here
-so that it stays derived.
+above. They are the 1200 quantizers, referenced from the `else` branches inside
+`analysis()`, and `--gc-sections` works on references rather than reachable
+paths — so the lever there is `#if`, not a linker flag.
 
-To measure it again: the map file lists discarded sections as well as kept
-ones and over-counts by more than a megabyte, so take the symbols
-`libmelpe.a` defines, intersect them with `arm-none-eabi-nm -S` over the ELF,
-and sum the survivors.
+To measure it again: the map file lists discarded sections alongside kept ones
+and over-counts by more than a megabyte. Take the symbols `libmelpe.a` defines,
+intersect with `arm-none-eabi-nm -S` over the ELF, and sum the survivors.

@@ -31,35 +31,27 @@ static THD_FUNCTION(heartbeat, arg) {
 }
 
 /*
- * MELPe 2400 bench.
+ * MELPe 2400 bench: the two questions the host checks cannot answer. Does a
+ * frame encode inside its own 22.5ms on this part, and does the Cortex-M7 -O2
+ * build produce the same bits as the host build compared against upstream.
  *
- * The one question the host checks cannot answer: does a frame encode inside
- * its own 22.5ms on this part, and does the Cortex-M7 -O2 build produce the
- * same bits as the host build that was compared against upstream. Both are
- * answered here, from flash, with nobody at the keyboard.
- *
- * It is fed from a clip rather than from the microphone on purpose. The
- * converters on this board run at 32kHz, so a microphone fed bench would be
- * measuring the resampler as much as the codec, and it could not be compared
- * against anything on the host. meow8k is the same 8kHz material
- * tools/melpe-check encodes, so the CRC below has something to be equal to.
+ * Fed from a clip, not the microphone: the converters run at 32kHz, so a mic
+ * fed bench would measure the resampler too and have nothing on the host to
+ * equal. meow8k is what tools/melpe-check encodes.
  */
 namespace {
 
-constexpr size_t melp_frame = 180U;    /* samples, 22.5ms at 8kHz */
-constexpr size_t melp_bytes = 7U;      /* 54 bits, packed 8 to the byte */
+constexpr size_t melp_frame = 180U;/* samples, 22.5ms at 8kHz            */
+constexpr size_t melp_bytes = 7U;  /* 54 bits, packed 8 to the byte      */
 constexpr size_t melp_frames = pika::audio::meow8k_len / melp_frame;
 
-/* Kept whole rather than CRCed on the fly so a mismatch can be diffed frame
-   by frame over SWD - arm-none-eabi-nm -S gives the address. */
+/* Kept whole so a mismatch can be diffed frame by frame over SWD. */
 uint8_t melp_bits[melp_frames * melp_bytes];
 
-/* Scratch for one decoded frame. A member rather than a local because the
-   codec's own stack appetite is the thing being measured and 360 bytes of
-   scratch riding on top of it would blur the answer. */
+/* Static, so 360 bytes of scratch do not blur the stack measurement. */
 int16_t melp_pcm[melp_frame];
 
-/* Bitwise, no table: 308 bytes once per pass does not justify 1KB of flash. */
+/* Bitwise, no table: 308 bytes a pass does not justify 1KB of flash. */
 uint32_t crc32(const uint8_t *p, size_t n) {
   uint32_t crc = 0xFFFFFFFFU;
 
@@ -99,22 +91,15 @@ struct Stats {
 
 Stats enc_stats, dec_stats;
 
-/*
- * One encode pass over the whole clip, timed per frame.
- *
- * melpe_i24() is called per pass so both passes start from the same codec
- * state - it clears hpspeech, the pitch tracks and the synthesis carry. It is
- * not a full reset (the one shot firstTime statics survive), which is exactly
- * why the two passes are reported separately rather than averaged.
- */
+/* melpe_i24() per pass, so both start from the same codec state. It is not a
+   full reset, which is why the passes are reported separately. */
 void encode_pass() {
   enc_stats.reset();
   melpe_i24();
 
   for (size_t i = 0; i < melp_frames; i++) {
-    /* The clip is const and in flash; melpe_a24() does not write its input,
-       but analysis() takes a non-const pointer, so the cast is the API's
-       fault rather than a claim about the data. */
+    /* melpe_a24() does not write its input; analysis() just takes a
+       non-const pointer. */
     short *in = (short *)(uintptr_t)&pika::audio::meow8k[i * melp_frame];
     const rtcnt_t t0 = chSysGetRealtimeCounterX();
 
@@ -146,8 +131,7 @@ size_t stack_free(const void *wa, size_t size) {
   return i;
 }
 
-/* Logging is deliberately outside every timed region: LOG() is chprintf over a
-   115200 baud UART and would dominate what it was measuring. */
+/* Outside every timed region: LOG() at 115200 baud would dominate it. */
 void report(const char *what, const Stats &s) {
   LOG("melpe24: %s n=%u min=%uus mean=%uus max=%uus (%u%% of 22500us)", what,
       (unsigned)s.n, (unsigned)to_us(s.min), (unsigned)to_us(s.mean()),
@@ -156,8 +140,7 @@ void report(const char *what, const Stats &s) {
 
 }// namespace
 
-/* 8K provisionally: the codec's stack appetite is undocumented and this thread
-   reports what it actually used, which is how the number gets settled. */
+/* 8K, and the thread reports what it actually used. */
 static THD_WORKING_AREA(waBench, 8192);
 static THD_FUNCTION(bench, arg) {
   (void)arg;
@@ -166,9 +149,8 @@ static THD_FUNCTION(bench, arg) {
   LOG("melpe24: %u frames of %u samples, core %u Hz", (unsigned)melp_frames,
       (unsigned)melp_frame, (unsigned)STM32_CORE_CK);
 
-  /* Twice, and reported separately. The first pass pays for cold I-cache and
-     flash prefetch on 190KB of codec, which is the margin that applies to the
-     first frame after a button press; the second is the steady state. */
+  /* Twice: the first pass pays for cold I-cache over 190KB of codec, which is
+     the margin at the first frame after a press; the second is steady state. */
   encode_pass();
   report("encode pass1", enc_stats);
   const uint32_t crc1 = crc32(melp_bits, sizeof(melp_bits));

@@ -1,10 +1,8 @@
 #include "MelpRecorder.h"
 
 #include <melpe/melpe.h>
-#include <pika/log.h>
 
 #include "ch.h"
-#include "hal.h" /* STM32_CORE_CK, for the encode timing. */
 
 #include <algorithm>
 
@@ -12,23 +10,15 @@ namespace pika::audio {
 
 namespace {
 
-/* One event per thing that can give the thread work. The event carries no
-   count on purpose: how much work there is comes from the ring indices and
-   from nowhere else, so a count and an index cannot disagree - which is the
-   usual way this shape goes wrong. */
-constexpr eventmask_t evt_pcm_in = EVENT_MASK(0);  /* a frame was captured   */
-constexpr eventmask_t evt_pcm_out = EVENT_MASK(1); /* the speaker took some  */
-constexpr eventmask_t evt_req = EVENT_MASK(2);     /* the heartbeat asked    */
-
-uint32_t cycles_to_us(uint32_t cycles) {
-    return (uint32_t) ((uint64_t) cycles * 1000000ULL / (uint64_t) STM32_CORE_CK);
-}
+/* The events carry no count: how much work there is comes from the ring
+   indices, so a count and an index cannot disagree. */
+constexpr eventmask_t evt_pcm_in = EVENT_MASK(0);
+constexpr eventmask_t evt_pcm_out = EVENT_MASK(1);
+constexpr eventmask_t evt_req = EVENT_MASK(2);
 
 }// namespace
 
 void MelpRecorder::start(tprio_t prio, void *wa, size_t wa_size) {
-    wa_ = wa;
-    wa_size_ = wa_size;
     thread_ = chThdCreateStatic(wa, wa_size, prio, thread_trampoline, this);
 }
 
@@ -49,9 +39,8 @@ bool MelpRecorder::replay(AudioSink &sink) {
         return false;
     }
 
-    /* playing_ is raised here rather than by the thread so that the caller's
-       state machine can wait on it without a window where the replay has been
-       asked for but has not visibly started. The thread lowers it. */
+    /* Raised here, not by the thread, so the caller can wait on it without a
+       window where the replay has been asked for but has not started. */
     sink_ = &sink;
     playing_ = true;
     req_ = req_replay;
@@ -59,23 +48,6 @@ bool MelpRecorder::replay(AudioSink &sink) {
     return true;
 }
 
-uint32_t MelpRecorder::encode_max_us() const { return cycles_to_us(enc_max_); }
-
-uint32_t MelpRecorder::encode_mean_us() const { return enc_n_ ? cycles_to_us((uint32_t) (enc_sum_ / enc_n_)) : 0U; }
-
-size_t MelpRecorder::stack_free() const {
-    const uint8_t *p = (const uint8_t *) wa_;
-    size_t i = 0;
-
-    while (p != nullptr && i < wa_size_ && p[i] == CH_DBG_STACK_FILL_VALUE) { i++; }
-    return i;
-}
-
-/*
- * Runs in the ADC interrupt, once per 8ms buffer half. Decimates 256 samples
- * to 64 and appends them to the frame being filled, handing whole frames to
- * the thread. Arithmetic and a copy, nothing that can block.
- */
 void MelpRecorder::take_audio_buffer(std::span<const int16_t> buf) {
     if (mode_ != mode_record || full_) {
         return;
@@ -87,9 +59,8 @@ void MelpRecorder::take_audio_buffer(std::span<const int16_t> buf) {
 
     while (i < n) {
         if ((uint16_t) (q_w_ - q_r_) >= q_slots) {
-            /* The thread missed its deadline. Drop the newest frame, count it
-               and keep recording: a 22.5ms hole is better than losing the
-               whole take, but it has to be visible, so the panel says so. */
+            /* The thread missed its deadline. A 22.5ms hole beats losing the
+               take, but the panel says so. */
             overruns_++;
             return;
         }
@@ -112,13 +83,9 @@ void MelpRecorder::take_audio_buffer(std::span<const int16_t> buf) {
 }
 
 /*
- * Runs in the DAC interrupt. Copies out of the ring the thread is decoding
- * into.
- *
  * Returning short would end the stream (DACSpeaker.cpp:166), so an underrun
- * pads with silence and still returns the full count: one scheduling hiccup
- * must not truncate a minute of audio. The stream ends exactly one way - the
- * thread has decoded the last frame and the ring has run dry.
+ * pads and still returns the full count. The stream ends one way only: the
+ * last frame is decoded and the ring has run dry.
  */
 size_t MelpRecorder::fill_audio_buffer(std::span<int16_t> buf) {
     const size_t avail = (size_t) (uint16_t) (ring_w_ - ring_r_);
@@ -152,25 +119,14 @@ void MelpRecorder::encode_queued() {
 
     while (q_r_ != q_w_) {
         if (frames_ >= max_frames) {
-            /* Out of room. Swallow whatever is queued so the interrupt does
-               not also start counting overruns for it. */
+            /* Swallow the queue so the interrupt does not count overruns for
+               audio there is no room for. */
             full_ = true;
             q_r_ = q_w_;
             break;
         }
 
-        const rtcnt_t t0 = chSysGetRealtimeCounterX();
-
         melpe_a24(&bits_[frames_ * frame_bytes], q_[q_r_ & (q_slots - 1U)]);
-
-        const uint32_t dt = (uint32_t) (chSysGetRealtimeCounterX() - t0);
-
-        if (dt > enc_max_) {
-            enc_max_ = dt;
-        }
-        enc_sum_ += dt;
-        enc_n_++;
-
         frames_++;
         q_r_++;
     }
@@ -206,9 +162,8 @@ void MelpRecorder::run() {
     chRegSetThreadName("melpe");
 
     while (true) {
-        /* Bounded on purpose. The events are the mechanism; the timeout is a
-           safety net, so that a converter that stops delivering degrades into
-           a slow poll rather than a thread that never wakes. */
+        /* The events are the mechanism; the timeout only keeps every wait
+           bounded, so a converter that stops delivering degrades to a poll. */
         (void) chEvtWaitAnyTimeout(ALL_EVENTS, TIME_MS2I(100));
 
         const uint8_t req = req_;
@@ -222,18 +177,15 @@ void MelpRecorder::run() {
                     overruns_ = 0U;
                     underruns_ = 0U;
                     full_ = false;
-                    enc_max_ = 0U;
-                    enc_sum_ = 0U;
-                    enc_n_ = 0U;
                     q_r_ = q_w_;
                     decim_.reset();
                     melpe_i24();
-                    mode_ = mode_record; /* Arms the interrupt. */
+                    mode_ = mode_record;
                     break;
 
                 case req_stop:
-                    /* Disarms the interrupt, but the queue may still hold up
-                       to eight frames; idle() goes true when they are in. */
+                    /* The queue may still hold eight frames; idle() goes true
+                       when they are in. */
                     mode_ = mode_drain;
                     break;
 
@@ -246,8 +198,7 @@ void MelpRecorder::run() {
                     melpe_i24();
                     mode_ = mode_replay;
 
-                    /* Prime before handing the source to the speaker, so the
-                       first pull finds audio rather than the underrun pad. */
+                    /* Prime first, so the first pull finds audio. */
                     decode_ahead();
 
                     if (!sink_->start_stream(*this)) {
