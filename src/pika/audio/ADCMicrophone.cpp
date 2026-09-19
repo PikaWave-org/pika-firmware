@@ -1,5 +1,6 @@
 #include "ADCMicrophone.h"
 
+#include <cmath>
 #include <pika/log.h>
 
 namespace pika::audio {
@@ -19,9 +20,9 @@ bool ADCMicrophone::init() {
 
     adc_grp_.circular = true;
     adc_grp_.num_channels = 1U;
-    adc_grp_.end_cb = fill_cb;
+    adc_grp_.end_cb = fill_cb_static;
     adc_grp_.error_cb = error_cb;
-    adc_grp_.cfgr = ADC_CFGR_RES_12BITS | ADC_CFGR_EXTEN_RISING | ADC_CFGR_EXTSEL_SRC(TRG_TIM6_TRGO);
+    adc_grp_.cfgr = ADC_CFGR_RES_16BITS | ADC_CFGR_EXTEN_RISING | ADC_CFGR_EXTSEL_SRC(TRG_TIM6_TRGO);
     adc_grp_.pcsel = 1U << cfg_.channel;
     adc_grp_.smpr[cfg_.channel / 10U] = SMP_TIME << (3U * (cfg_.channel % 10U));
     adc_grp_.sqr[0] = ADC_SQR1_SQ1_N(cfg_.channel);
@@ -119,30 +120,36 @@ void ADCMicrophone::stop_capture_i() {
  * buffer; adcIsBufferComplete() tells which, and so which half has just been
  * filled.
  */
-void ADCMicrophone::fill_cb(ADCDriver *adcp) {
+void ADCMicrophone::fill_cb_static(ADCDriver *adcp) {
     /* Stopping the conversion disables the DMA stream and clears its pending
        flags under the lock, so a callback with no consumer is a driver bug. */
     chDbgAssert(instance_ != nullptr, "mic: instance_ == nullptr");
 
     adcsample_t *half = adcIsBufferComplete(adcp) ? &mic_buffer[mic_buffer_half_len] : &mic_buffer[0];
-    std::span<const int16_t> buf = instance_->convert({half, mic_buffer_half_len});
-    instance_->consumers_.for_each([&](AudioConsumer &consumer) {
-        consumer.take_audio_buffer(buf);
-    });
+    instance_->fill_cb({half, mic_buffer_half_len});
 }
 
 /*
  * Raw codes to signed full scale, in place.
  */
-std::span<const int16_t> ADCMicrophone::convert(std::span<adcsample_t> buf) {
-
-    int16_t *out = reinterpret_cast<int16_t *>(buf.data());
-
+void ADCMicrophone::fill_cb(std::span<adcsample_t> buf) {
+    std::span<int16_t> out{reinterpret_cast<int16_t *>(buf.data()), buf.size()};
     for (size_t i = 0; i < buf.size(); i++) {
-        out[i] = (int16_t) (((int32_t) buf[i] - (int32_t) ADC_VALUE_MID) << ADC_TO_FULL_SCALE);
+        float v = float((int32_t) buf[i] - (int32_t) ADC_VALUE_MID);
+        float v_abs = std::fabs(v);
+        float v_abs_gained = v_abs * agc_gain_;
+        if (v_abs_gained >= ADC_VALUE_MID) {
+            // Hard overload, set min gain immediately
+            agc_gain_ = 1.0f;
+        } else {
+            // Proportional asymmetric gain regulation - slow up, fast down
+            float gain_err = v_abs * agc_gain_ / AGC_TARGET;
+            float w = gain_err > 1.0f ? AGC_W_DOWN : AGC_W_UP;
+            agc_gain_ = std::fminf(AGC_GAIN_MAX, agc_gain_ * (1.0f + (1.0f - gain_err) * w));
+        }
+        out[i] = (int16_t) (((int32_t) buf[i] - (int32_t) ADC_VALUE_MID) * agc_gain_);
     }
-
-    return {out, buf.size()};
+    instance_->consumers_.for_each([&](AudioConsumer &consumer) { consumer.take_audio_buffer(out); });
 }
 
 void ADCMicrophone::error_cb(ADCDriver *adcp, adcerror_t err) {

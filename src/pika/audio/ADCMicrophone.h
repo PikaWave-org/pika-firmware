@@ -88,11 +88,8 @@ public:
 private:
     static ADCMicrophone *instance_;
 
-    static constexpr int ADC_BIT_DEPTH = 12;
-    static constexpr uint32_t ADC_VALUE_MID = 1U << (ADC_BIT_DEPTH - 1);
-
-    /* 12 bit codes to signed 16 bit full scale is a shift of four. */
-    static constexpr int ADC_TO_FULL_SCALE = 16 - ADC_BIT_DEPTH;
+    static constexpr int ADC_BIT_DEPTH = 16;
+    static constexpr uint32_t ADC_VALUE_MID = 1U << (16 - 1);
 
     /*
      * EXTSEL value selecting TIM6's TRGO as the ADC trigger. Not the same
@@ -115,7 +112,12 @@ private:
     static constexpr unsigned mic_buffer_half_len = 256U;
     static __attribute__((section(".nocache"), aligned(4))) adcsample_t mic_buffer[2U * mic_buffer_half_len];
 
-    static void fill_cb(ADCDriver *adcp);
+    static constexpr float AGC_W_DOWN = 0.01f;
+    static constexpr float AGC_W_UP = 0.00002f;
+    static constexpr float AGC_TARGET = ADC_VALUE_MID * 0.5f;
+    static constexpr float AGC_GAIN_MAX = 1000.0f;
+
+    static void fill_cb_static(ADCDriver *adcp);
     static void error_cb(ADCDriver *adcp, adcerror_t err);
 
     IntrusiveList<AudioConsumer> consumers_;
@@ -125,9 +127,7 @@ private:
     /* I-class twin of stop_capture(), for use from the DMA callback. */
     void stop_capture_i();
 
-    /* Rewrites raw codes in place as signed full scale samples, taking the
-       bias to be mid scale. Returns the block as the consumer sees it. */
-    std::span<const int16_t> convert(std::span<adcsample_t> buf);
+    void fill_cb(std::span<adcsample_t> buf);
 
     Config cfg_{};
 
@@ -143,6 +143,7 @@ private:
     volatile uint32_t error_flags_ = 0U; /**< Also set from the callback.  */
     bool ready_ = false;                 /**< init() succeeded.            */
     bool running_ = false;
+    float agc_gain_ = 1.0f;
 };
 
 }// namespace pika::audio

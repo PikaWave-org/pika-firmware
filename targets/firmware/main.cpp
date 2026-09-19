@@ -123,9 +123,6 @@ enum class Rec : uint8_t { idle, recording, waiting, beep_in, replay, beep_out }
 static Rec rec_state;
 static unsigned rec_ticks;
 
-/* Volume to put back after the replay, see serve_record(). */
-static float rec_volume;
-
 /* Tenths of a second of recording, for the screen. Counted in codec frames of
    22.5ms now, not in samples: nothing stores samples any more. */
 static unsigned record_tenths() { return (unsigned) melp_rec.tenths(); }
@@ -338,14 +335,6 @@ static bool serve_record() {
                 mic.stop_capture();
             }
 
-            /* The recording peaks far below full scale - speech reads around
-               -18dB on the meter - so playing it at the volume setting would
-               be inaudible and read as an empty buffer. It goes out at full
-               scale instead and the setting is put back at the end, which is a
-               replay deliberately louder than the volume control says. */
-            rec_volume = spk.volume();
-            spk.set_volume(1.0f);
-
             tone_gen.tone(spk, beep_in_hz, beep_gain, beep_in_s);
             rec_state = Rec::beep_in;
             break;
@@ -357,7 +346,6 @@ static bool serve_record() {
 
             if (!melp_rec.replay(spk)) {
                 LOG("rec: replay rejected");
-                spk.set_volume(rec_volume);
                 rec_state = Rec::idle;
                 return false;
             }
@@ -393,7 +381,6 @@ static bool serve_record() {
                 break;
             }
 
-            spk.set_volume(rec_volume);
             rec_state = Rec::idle;
             LOG("rec: done");
 
@@ -719,8 +706,6 @@ int main() {
     chThdCreateStatic(waGnss, sizeof(waGnss), NORMALPRIO, gnss_reader, nullptr);
     chThdCreateStatic(waGnssLog, sizeof(waGnssLog), NORMALPRIO, gnss_logger, nullptr);
 
-    /* Applies the initial volume as well as starting the buttons, so it has to
-     run before anything can be played. */
     ui.init();
 
     chThdCreateStatic(waUi, sizeof(waUi), NORMALPRIO, ui_reader, nullptr);
