@@ -17,6 +17,7 @@
 #include <pika/lcd/ST75160.h>
 #include <pika/lcd/images/pika_logo.h>
 #include <pika/log.h>
+#include <pika/radio/SX1262.h>
 #include <pika/ublox.h>
 #include <pika/ui.h>
 
@@ -188,12 +189,49 @@ static const pika::gnss::Ublox::Config gnss_cfg = {&BOARD_GNSS_SERIAL, BOARD_GNS
 
 static pika::gnss::Ublox gnss{gnss_cfg};
 
+/*
+ * The SX1262 radio on SPI2, see the board header for the pins.
+ *
+ * cfg1/cfg2 are the STM32H7 SPI registers the low level driver takes as they
+ * are, apart from MASTER and SSOE which it sets itself:
+ *   MBR = 1 divides the SPI2 kernel clock - PLL1_Q, 52MHz per mcuconf.h - by
+ *   4, giving 13MHz, under the SX1262's 16MHz ceiling.
+ *   DSIZE = 7 is 8 bit frames, and cfg2 = 0 leaves CPOL = CPHA = 0 (SPI mode
+ *   0, what the radio expects) and MSB first.
+ *
+ * The chip select is a GPIO driven by the driver, so it goes in as a port and
+ * pad rather than an alternate function pin.
+ */
+static const SPIConfig radio_spi_cfg = {
+        .circular = false,
+        .slave = false,
+        .data_cb = nullptr,
+        .error_cb = nullptr,
+        .ssport = PAL_PORT(LINE_RADIO_SPI_NSS),
+        .sspad = PAL_PAD(LINE_RADIO_SPI_NSS),
+        .cfg1 = SPI_CFG1_MBR_0 | (7U << SPI_CFG1_DSIZE_Pos),
+        .cfg2 = 0U,
+};
+
+static pika::radio::SX1262 radio{BOARD_RADIO_SPI, LINE_RADIO_RST,  LINE_RADIO_BUSY,
+                                 LINE_RADIO_DIO1, LINE_RADIO_TXEN, LINE_RADIO_RXEN};
+
+/* Fixed length frames, so the receiver needs no header; 16 bytes is enough for
+   the beat counter the heartbeat sends and keeps the air time short. */
+static constexpr size_t radio_payload_len = 128U;
+
+static uint8_t radio_tx_buf[radio_payload_len];
+
+/* Set once the radio has been configured, so the heartbeat does not transmit
+   into a chip that is still in reset. */
+static bool radio_ready;
+
 /* The UI takes a plain function, so it needs to know nothing about players,
    sound assets, or who is holding the sample clock. */
 static void play_test_sound() { sound_requested = true; }
 
 /* How long the logo stays up at boot, see main(). */
-static constexpr uint32_t splash_ms = 2000U;
+static constexpr uint32_t splash_ms = 1000U;
 
 static_assert(pika::lcd::pika_logo_width <= pika::lcd::ST75160::width &&
                       pika::lcd::pika_logo_height <= pika::lcd::ST75160::height,
@@ -322,9 +360,8 @@ static bool serve_record() {
                 break;
             }
 
-            LOG("rec: %u frames, %u.%us, %u bytes, %u overruns", (unsigned) melp_rec.frames(),
-                record_tenths() / 10U, record_tenths() % 10U, (unsigned) melp_rec.bytes(),
-                (unsigned) melp_rec.overruns());
+            LOG("rec: %u frames, %u.%us, %u bytes, %u overruns", (unsigned) melp_rec.frames(), record_tenths() / 10U,
+                record_tenths() % 10U, (unsigned) melp_rec.bytes(), (unsigned) melp_rec.overruns());
 
             if (melp_rec.frames() == 0U) {
                 rec_state = Rec::idle;
@@ -561,6 +598,22 @@ static THD_FUNCTION(heartbeat, arg) {
             chsnprintf(line, sizeof line, "beat %u", beat);
             lcd.rect<false>(4, 20, 8 * 12, 8);
             lcd.text(4, 20, line);
+
+            /*
+             * A test packet per beat, so there is something on the air to
+             * look at with a receiver or a spectrum analyzer.
+             *
+             * tx() blocks until the radio reports TxDone, which at SF9 and
+             * 250kHz is around 170ms for this payload. The thread sleeps on
+             * the DIO1 interrupt for all of it, so nothing else stalls, but
+             * this beat and its panel update land late by that much - the
+             * clock on the display runs slow while the radio transmits.
+             */
+            if (radio_ready) {
+                chsnprintf((char *) radio_tx_buf, sizeof radio_tx_buf, "pika %u", beat);
+                std::span<uint8_t> packet{radio_tx_buf, sizeof radio_tx_buf};
+                radio.tx(packet);
+            }
         }
 
         /*
@@ -598,30 +651,6 @@ static THD_FUNCTION(heartbeat, arg) {
 
         chThdSleepMilliseconds(heartbeat_tick_ms);
         tick = (tick + 1) % heartbeat_ticks_per_beat;
-    }
-}
-
-/* The GNSS driver owns this thread: run() configures the receiver, sweeping
-   the baud rates to find it, and then reads forever. */
-static THD_WORKING_AREA(waGnss, 2048);
-
-static THD_FUNCTION(gnss_reader, arg) {
-    (void) arg;
-    chRegSetThreadName("gnss");
-
-    gnss.run();
-}
-
-static THD_WORKING_AREA(waGnssLog, 2048);
-
-static THD_FUNCTION(gnss_logger, arg) {
-    (void) arg;
-    chRegSetThreadName("gnss-log");
-
-    while (true) {
-        log_gnss();
-        log_mon_hw();
-        chThdSleepMilliseconds(1000);
     }
 }
 
@@ -683,6 +712,21 @@ int main() {
     mic_ready = mic.init();
     LOG("mic: init %s", mic_ready ? "ok" : "failed");
 
+    /* The radio. init() pulses RST and then talks to the chip, so the bus has
+       to be running first. It waits on BUSY with a sleep rather than a
+       timeout, so an absent or unpowered module would hang here - see the
+       LOG either side of it when the board comes up quiet.
+       The power stays at the driver's default 0dBm: enough to see on a
+       receiver next to the board, and nothing to think about regarding what
+       is legal on 868MHz. */
+    spiStart(&BOARD_RADIO_SPI, &radio_spi_cfg);
+    LOG("radio: init");
+    radio.set_mod_params(9, 5, 5);
+    radio.set_power(20.0f);
+    radio.init(radio_payload_len);
+    radio_ready = true;
+    LOG("radio: init done");
+
     /* What is left of the splash, then the screen the heartbeat writes into.
        Elapsed time rather than a deadline compare, so a wrapped tick counter
        cannot leave this asleep for a very long time. */
@@ -700,11 +744,6 @@ int main() {
     }
 
     chThdCreateStatic(waHeartbeat, sizeof(waHeartbeat), NORMALPRIO, heartbeat, nullptr);
-
-    /* Finding the receiver means sweeping the baud rates, which takes seconds
-       and has no business holding up the rest of the boot. */
-    chThdCreateStatic(waGnss, sizeof(waGnss), NORMALPRIO, gnss_reader, nullptr);
-    chThdCreateStatic(waGnssLog, sizeof(waGnssLog), NORMALPRIO, gnss_logger, nullptr);
 
     ui.init();
 

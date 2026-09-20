@@ -81,6 +81,26 @@ static void stm32_gpio_init(void) {
     palSetLineMode(LINE_BTN_PTT, PAL_MODE_INPUT_PULLUP);
     palSetLineMode(LINE_BTN_LSN, PAL_MODE_INPUT_PULLUP);
 
+    /* SX1262 radio on SPI2. NSS is a GPIO the SPI driver toggles, so it is set
+     high before it becomes an output: a low chip select while the bus is
+     still idle starts a command the radio never sees the end of. RST is
+     active low and stays low here, holding the chip in reset until the
+     driver's init() pulses it; RXEN/TXEN are active high and start low, with
+     neither front end path enabled.*/
+    palSetLine(LINE_RADIO_SPI_NSS);
+    palSetLineMode(LINE_RADIO_SPI_NSS, PAL_MODE_OUTPUT_PUSHPULL | PAL_STM32_OSPEED_HIGHEST);
+    palSetLineMode(LINE_RADIO_SPI_SCK, BOARD_RADIO_SPI_PINMODE);
+    palSetLineMode(LINE_RADIO_SPI_MISO, BOARD_RADIO_SPI_PINMODE);
+    palSetLineMode(LINE_RADIO_SPI_MOSI, BOARD_RADIO_SPI_PINMODE);
+    palClearLine(LINE_RADIO_RST);
+    palSetLineMode(LINE_RADIO_RST, PAL_MODE_OUTPUT_PUSHPULL);
+    palClearLine(LINE_RADIO_RXEN);
+    palSetLineMode(LINE_RADIO_RXEN, PAL_MODE_OUTPUT_PUSHPULL);
+    palClearLine(LINE_RADIO_TXEN);
+    palSetLineMode(LINE_RADIO_TXEN, PAL_MODE_OUTPUT_PUSHPULL);
+    palSetLineMode(LINE_RADIO_BUSY, PAL_MODE_INPUT);
+    palSetLineMode(LINE_RADIO_DIO1, PAL_MODE_INPUT);
+
     /* The HSE oscillator has to be running before stm32_clock_init().*/
     palSetLine(LINE_HSE_EN);
 }

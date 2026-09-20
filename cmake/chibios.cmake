@@ -47,6 +47,10 @@ set(CHIBIOS_SOURCES
         "${CHIBIOS_LLD}/I2Cv3/hal_i2c_lld.c"
         "${CHIBIOS_LLD}/TIMv1/hal_gpt_lld.c"
         "${CHIBIOS_LLD}/TIMv1/hal_pwm_lld.c"
+        # SPI: the v2 low level driver, as platform_type2.mk picks it for H7
+        # (SPIv3/driver_v2.mk) and STM32H7xx/hal_lld.h defines
+        # HAL_LLD_SELECT_SPI_V2, so hal_spi.h expects the v2 driver fields.
+        "${CHIBIOS_LLD}/SPIv3/hal_spi_v2_lld.c"
         "${CHIBIOS_LLD}/SYSTICKv1/hal_st_lld.c"
         "${CHIBIOS_LLD}/USARTv3/hal_serial_lld.c")
 

@@ -85,6 +85,15 @@
 #define LINE_BTN_LEFT               PAL_LINE(GPIOC, 4U)
 #define LINE_BTN_PTT                PAL_LINE(GPIOC, 5U)
 #define LINE_BTN_LSN                PAL_LINE(GPIOB, 2U)
+#define LINE_RADIO_RST              PAL_LINE(GPIOA, 0U)
+#define LINE_RADIO_RXEN             PAL_LINE(GPIOA, 1U)
+#define LINE_RADIO_TXEN             PAL_LINE(GPIOA, 2U)
+#define LINE_RADIO_SPI_SCK          PAL_LINE(GPIOA, 9U)
+#define LINE_RADIO_SPI_NSS          PAL_LINE(GPIOA, 15U)
+#define LINE_RADIO_SPI_MISO         PAL_LINE(GPIOB, 14U)
+#define LINE_RADIO_SPI_MOSI         PAL_LINE(GPIOB, 15U)
+#define LINE_RADIO_BUSY             PAL_LINE(GPIOE, 7U)
+#define LINE_RADIO_DIO1             PAL_LINE(GPIOE, 8U)
 
 /* Serial driver behind the debug UART pins above. */
 #define BOARD_DBG_SERIAL            SD3
@@ -203,6 +212,23 @@
  */
 #define BOARD_BTN_DEBOUNCE_MS       20U
 #define BOARD_BTN_POLL_MS           10U
+
+/*
+ * Semtech SX1262 sub-GHz radio on SPI2, AF5 on SCK/MISO/MOSI.
+ *
+ * NSS is not on AF5: ChibiOS drives the chip select itself as a plain GPIO
+ * (SPI_SELECT_MODE_PAD, the default), which is also what the SX1262 wants -
+ * it ends a command on the rising edge of NSS rather than on a frame count.
+ *
+ * LINE_RADIO_RST is active low and the pin comes up low, so the chip stays in
+ * reset until the driver pulses it. RXEN/TXEN switch the front end and are
+ * active high, both low means neither path is enabled. BUSY is polled before
+ * every command; DIO1 is the done interrupt and uses EXTI channel 8, which no
+ * button claims (see the note above for why that matters).
+ */
+#define BOARD_RADIO_SPI             SPID2
+#define BOARD_RADIO_SPI_PINMODE     (PAL_MODE_ALTERNATE(5U) |                \
+                                     PAL_STM32_OSPEED_HIGHEST)
 
 /*===========================================================================*/
 /* External declarations.                                                    */
