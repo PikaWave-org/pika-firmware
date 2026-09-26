@@ -1,0 +1,5 @@
+proto_id: 1
+comment: "MAC layer protocol"
+messages:
+  0: { name: "sync", type: "pika/types/mac/sync", comment: "Broadcast sync message" }
+  1: { name: "data_frame", type: "pika/types/mac/data_frame", comment: "Data frame, node-to-node" }

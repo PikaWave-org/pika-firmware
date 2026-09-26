@@ -49,9 +49,9 @@ public:
          */
     void set_power(float power);
 
-    void tx(const std::span<uint8_t> &data);
+    void tx(std::span<const uint8_t> data);
 
-    bool rx(std::span<uint8_t> &data, systime_t &timestamp, systime_t end_time);
+    std::span<const uint8_t> rx(systime_t &timestamp, systime_t end_time);
 
     RadioStats get_stats() const;
 
@@ -90,9 +90,9 @@ private:
 
     uint8_t read_reg(uint16_t reg);
 
-    void write_buffer(const std::span<uint8_t> &data);
+    void write_buffer(std::span<const uint8_t> data);
 
-    void read_buffer(std::span<uint8_t> &data, size_t n);
+    std::span<uint8_t> read_buffer(size_t n);
 
     void do_set_freq();
 

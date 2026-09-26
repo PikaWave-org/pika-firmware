@@ -1,0 +1,6 @@
+type_class: struct
+comment: "Data frame ack, when node has nothing to transmit"
+fields:
+  - { name: "src_addr", type: "uint32", comment: "Source node address" }
+  - { name: "dst_addr", type: "uint32", comment: "Destination node address" }
+  - { name: "ack", type: "uint32", comment: "Acknowledged sequence number of the last received frame" }

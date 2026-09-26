@@ -8,20 +8,18 @@ namespace {
 
 const char *const button_names[] = {"PWR", "UP", "DOWN", "RIGHT", "LEFT", "PTT", "LSN"};
 
-static_assert(sizeof(button_names) / sizeof(button_names[0]) == Buttons::count,
-              "button_names must cover every Button");
+static_assert(sizeof(button_names) / sizeof(button_names[0]) == Buttons::count, "button_names must cover every Button");
 
-}  // namespace
+}// namespace
 
 Buttons *Buttons::instance_ = nullptr;
 
 Buttons::Buttons(const Config &cfg) : cfg_(cfg) {
-    /* Runs before halInit(), so nothing here may touch the hardware. */
     chEvtObjectInit(&events_);
     chVTObjectInit(&poll_vt_);
 
     for (size_t i = 0; i < count; i++) {
-        state_[i].index = (uint8_t) i;
+        state_[i].button = (Button) i;
         state_[i].changed = (systime_t) 0;
         state_[i].down = false;
     }
@@ -48,7 +46,7 @@ void Buttons::init() {
     /* No timer once every line has an EXTI channel of its own. */
     if (any_polled) {
         chSysLock();
-        chVTSetContinuousI(&poll_vt_, cfg_.poll_period, poll_cb, this);
+        chVTSetContinuousI(&poll_vt_, POLL_PERIOD, poll_cb, this);
         chSysUnlock();
     }
 }
@@ -60,26 +58,30 @@ const char *Buttons::name(Button b) {
     return i < count ? button_names[i] : "?";
 }
 
-/* The lockout is the whole of the debouncing; outside it the line is read and
-   believed. */
 void Buttons::update_i(State &s) {
-    if (chVTTimeElapsedSinceX(s.changed) < cfg_.debounce) { return; }
+    if (chVTTimeElapsedSinceX(s.changed) < DEBOUNCE) {
+        return;
+    }
 
-    const bool down = palReadLine(cfg_.lines[s.index].line) == PAL_LOW;
+    const bool down = palReadLine(cfg_.lines[(size_t) s.button].line) == PAL_LOW;
 
-    if (down == s.down) { return; }
+    if (down == s.down) {
+        return;
+    }
 
     s.changed = chVTGetSystemTimeX();
     s.down = down;
 
-    if (down) { chEvtBroadcastFlagsI(&events_, flag((Button) s.index)); }
+    if (down) {
+        chEvtBroadcastFlagsI(&events_, flag(s.button));
+    }
 }
 
-/* The lines with no EXTI channel of their own. Same lockout as the rest; the
-   poll period is the only difference and it shows up as latency. */
 void Buttons::poll_i() {
     for (uint8_t i = 0; i < count; i++) {
-        if (cfg_.lines[i].polled) { update_i(state_[i]); }
+        if (cfg_.lines[i].polled) {
+            update_i(state_[i]);
+        }
     }
 }
 

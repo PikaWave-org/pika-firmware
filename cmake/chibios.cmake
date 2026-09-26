@@ -34,6 +34,9 @@ set(CHIBIOS_SOURCES
         # chprintf() and friends (os/hal/lib/streams/streams.mk).
         "${CHIBIOS}/os/hal/lib/streams/chprintf.c"
         "${CHIBIOS}/os/hal/lib/streams/memstreams.c"
+        # C++ wrappers (os/various/cpp_wrappers/chcpp.mk): BaseThread and
+        # friends in ch.hpp need _thd_start() and the rest from here.
+        "${CHIBIOS}/os/various/cpp_wrappers/ch.cpp"
         # STM32H7xx platform and the low level drivers we enable.
         "${CHIBIOS}/os/hal/ports/common/ARMCMx/nvic.c"
         "${CHIBIOS}/os/hal/ports/STM32/STM32H7xx/hal_lld.c"
@@ -80,6 +83,7 @@ set(CHIBIOS_INCLUDE_DIRS
         "${CHIBIOS}/os/hal/lib/streams"
         "${CHIBIOS}/os/hal/ports/common/ARMCMx"
         "${CHIBIOS}/os/hal/ports/STM32/STM32H7xx"
+        "${CHIBIOS}/os/various/cpp_wrappers"
         ${CHIBIOS_LLD_INCLUDE_DIRS})
 
 # Port the J-Link GDB server listens on.

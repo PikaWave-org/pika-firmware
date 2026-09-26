@@ -88,7 +88,7 @@ void SX1262::init(size_t payload_len) {
     _inited = true;
 }
 
-void SX1262::tx(const std::span<uint8_t> &data) {
+void SX1262::tx(std::span<const uint8_t> data) {
     write_buffer(data);
 
     // Enable IRQ on TxDone
@@ -119,7 +119,7 @@ void SX1262::tx(const std::span<uint8_t> &data) {
     send_command(CMD_CLEAR_IRQ_STATUS, 0x00, 0x01);
 }
 
-bool SX1262::rx(std::span<uint8_t> &data, systime_t &timestamp, systime_t end_time) {
+std::span<const uint8_t> SX1262::rx(systime_t &timestamp, systime_t end_time) {
     // Enable IRQ on RxDone
     enable_irq(0x02);
 
@@ -152,11 +152,10 @@ bool SX1262::rx(std::span<uint8_t> &data, systime_t &timestamp, systime_t end_ti
     // Disable LNA
     palClearLine(_gpio_rx);
 
-    bool res = false;
+    std::span<uint8_t> res{};
     if (get_irq_status() & 0x02) {
         // Packet received
-        read_buffer(data, _payload_len);
-        res = true;
+        res = read_buffer(_payload_len);
     }
 
     // Clear IRQ
@@ -200,18 +199,18 @@ uint8_t SX1262::read_reg(uint16_t reg) {
     return _spi_buf[4];
 }
 
-void SX1262::write_buffer(const std::span<uint8_t> &data) {
+void SX1262::write_buffer(std::span<const uint8_t> data) {
     wait_busy();
     _spi_buf[0] = CMD_WRITE_BUFFER;
     _spi_buf[1] = 0;// offset
-    ::memcpy(&_spi_buf[2], data.data(), data.size());
+    std::copy(data.begin(), data.end(), &_spi_buf[2]);
     _spi_buf_size = 2 + data.size();
     spiSelect(&_spi);
     spiSend(&_spi, _spi_buf_size, _spi_buf.data());
     spiUnselect(&_spi);
 }
 
-void SX1262::read_buffer(std::span<uint8_t> &data, size_t n) {
+std::span<uint8_t> SX1262::read_buffer(size_t n) {
     wait_busy();
     _spi_buf_size = 3 + n;
     memset(_spi_buf.data(), 0, _spi_buf_size);
@@ -220,7 +219,7 @@ void SX1262::read_buffer(std::span<uint8_t> &data, size_t n) {
     spiSelect(&_spi);
     spiExchange(&_spi, _spi_buf_size, _spi_buf.data(), _spi_buf.data());
     spiUnselect(&_spi);
-    ::memcpy(data.data(), &_spi_buf[3], n);
+    return {&_spi_buf[3], n};
 }
 
 void SX1262::do_set_freq() {

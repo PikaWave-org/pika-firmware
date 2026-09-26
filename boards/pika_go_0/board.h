@@ -195,25 +195,6 @@
 #define BOARD_GNSS_BAUD_RUN         115200U
 
 /*
- * Front panel buttons.
- *
- * All seven short their line to ground when pressed and rely on the MCU's
- * internal pull-up, so a pressed button reads low.
- *
- * Six of them are interrupt driven, but BTN_PWR cannot be: an EXTI channel is
- * selected by pad number and can be mapped to only one port at a time, and
- * PE10 and PD10 both want channel 10. ChibiOS catches the second one with a
- * "channel already in use" assertion. PD10 (BTN_UP) keeps the interrupt and
- * PE10 is polled instead, which costs it up to BOARD_BTN_POLL_MS of latency.
- * Moving BTN_PWR to a pad whose number no other button uses would let the
- * driver drop its polling path entirely.
- *
- * The remaining six sit on channels 10, 11, 14, 4, 5 and 2, all distinct.
- */
-#define BOARD_BTN_DEBOUNCE_MS       20U
-#define BOARD_BTN_POLL_MS           10U
-
-/*
  * Semtech SX1262 sub-GHz radio on SPI2, AF5 on SCK/MISO/MOSI.
  *
  * NSS is not on AF5: ChibiOS drives the chip select itself as a plain GPIO

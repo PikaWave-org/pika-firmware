@@ -36,21 +36,19 @@ enum class Button : uint8_t { pwr, up, down, right, left, ptt, lsn, count };
 
 class Buttons {
 public:
-
     /** @brief  How many lines the driver tracks. */
     static constexpr size_t count = (size_t) Button::count;
 
     /** @brief  One button's wiring. */
     struct Entry {
-        ioline_t line;  /**< Line the switch pulls low.                       */
-        bool polled;    /**< true if no EXTI channel is available for it.     */
+        ioline_t line; /**< Line the switch pulls low.                       */
+        bool polled;   /**< true if no EXTI channel is available for it.     */
     };
 
     /** @brief  How the buttons are wired up, taken from the board header. */
     struct Config {
-        Entry lines[count];         /**< Indexed by Button.                   */
-        sysinterval_t debounce;     /**< Lockout after an accepted edge.      */
-        sysinterval_t poll_period;  /**< Sampling period for polled lines.    */
+        Entry lines[count]{};        /**< Indexed by Button.                   */
+        eventid_t event_offset{};
     };
 
     explicit Buttons(const Config &cfg);
@@ -68,7 +66,7 @@ public:
     event_source_t &events() { return events_; }
 
     /** @brief  Event flag standing for a press of @p b. */
-    static eventflags_t flag(Button b) { return (eventflags_t) 1U << (unsigned) b; }
+    eventflags_t flag(Button b) { return (eventflags_t) 1U << (cfg_.event_offset + (eventid_t) b); }
 
     /** @brief  Current debounced level of @p b, true while it is held. */
     bool pressed(Button b) const;
@@ -77,13 +75,15 @@ public:
     static const char *name(Button b);
 
 private:
+    static constexpr sysinterval_t DEBOUNCE = TIME_MS2I(20);
+    static constexpr sysinterval_t POLL_PERIOD = TIME_MS2I(10);
 
     /* One button's state. An edge callback is handed the record for the line
        that raised it, so it reaches its own state without searching. */
     struct State {
-        uint8_t index;       /**< Which Button this record stands for.      */
-        systime_t changed;   /**< When it last changed, for the lockout.    */
-        volatile bool down;  /**< Debounced level, true while pressed.      */
+        Button button;      /**< Which Button this record stands for.      */
+        systime_t changed;  /**< When it last changed, for the lockout.    */
+        volatile bool down; /**< Debounced level, true while pressed.      */
     };
 
     /* The callback's one void* carries the State, so the driver is reached
@@ -102,4 +102,4 @@ private:
     State state_[count];
 };
 
-}  // namespace pika::input
+}// namespace pika::input

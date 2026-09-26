@@ -18,5 +18,7 @@ include(${PROJECT_ROOT}/cmake/images.cmake)
 include(${PROJECT_ROOT}/cmake/melpe.cmake)
 include(${PROJECT_ROOT}/boards/pika_go_0/board.cmake)
 
+include("submodules/messgen/integrations/cmake/messgen.cmake")
+
 add_subdirectory(targets/firmware)
 add_subdirectory(targets/test)

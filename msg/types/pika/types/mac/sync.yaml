@@ -1,0 +1,10 @@
+type_class: struct
+comment: "Broadcast sync message"
+fields:
+  - { name: "src_addr", type: "uint32", comment: "Source node address" }
+  - { name: "time", type: "uint64", comment: "[ns] Sender time at beginning of transmission" }
+  - { name: "stratum", type: "uint8", comment: "Time source stratum as defined in NTP protocol, valid GPS sync is stratum 1" }
+  - { name: "listen_freq", type: "uint32", comment: "[kHz] Frequency for the next planned listen windows" }
+  - { name: "listen_time", type: "uint32", comment: "[ns] Time of the next planned listen window as offset from `time`" }
+  - { name: "listen_interval", type: "uint32", comment: "[ns] Planned interval for next listen windows" }
+  - { name: "listen_duration", type: "uint32", comment: "[ns] Planned listen window duration" }

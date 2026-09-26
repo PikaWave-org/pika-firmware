@@ -1,0 +1,8 @@
+type_class: struct
+comment: "Data frame"
+fields:
+  - { name: "src_addr", type: "uint32", comment: "Source node address" }
+  - { name: "dst_addr", type: "uint32", comment: "Destination node address" }
+  - { name: "seq", type: "uint32", comment: "Sequence number of this frame" }
+  - { name: "ack", type: "uint32", comment: "Acknowledged sequence number of the last received frame" }
+  - { name: "payload", type: "bytes", comment: "Data frame payload" }

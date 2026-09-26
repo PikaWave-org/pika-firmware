@@ -12,7 +12,7 @@ pika_add_firmware(firmware
                 ${SRC_ROOT}/pika/audio/SampleClock.cpp
                 ${SRC_ROOT}/pika/lcd/ST75160.cpp
                 ${SRC_ROOT}/pika/radio/SX1262.cpp
-                ${SRC_ROOT}/pika/ui.cpp
+                ${SRC_ROOT}/pika/App.cpp
                 ${SRC_ROOT}/pika/ublox.cpp)
 
 target_compile_definitions(firmware.elf PRIVATE CHPRINTF_USE_FLOAT=TRUE)
