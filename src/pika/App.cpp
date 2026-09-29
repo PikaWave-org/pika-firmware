@@ -71,7 +71,7 @@ void HomeScreen::on_button(input::Button button) { handle_menu_button(menu_items
 
 void HomeScreen::send_message() {
     std::array<uint8_t, 32> msg;
-    bool ok = app_->mac().send_frame(2, msg);
+    bool ok = app_->mac().send_data_frame(2, msg);
     LOG("send message: %s", ok ? "OK" : "FAIL");
 }
 

@@ -1,9 +1,7 @@
 #pragma once
 
-#include "MAC.h"
-#include "radio/SX1262.h"
-
-
+#include <pika/MAC.h>
+#include <pika/radio/SX1262.h>
 #include <pika/audio/ADCMicrophone.h>
 #include <pika/audio/DACSpeaker.h>
 #include <pika/audio/PCMPlayer.h>

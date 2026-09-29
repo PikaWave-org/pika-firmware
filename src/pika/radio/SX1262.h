@@ -1,5 +1,7 @@
 #pragma once
 
+#include <pika/Time.h>
+
 #include <hal.h>
 
 #include <span>
@@ -55,6 +57,10 @@ public:
 
     RadioStats get_stats() const;
 
+    uint64_t freq() const { return _freq; }
+
+    Time tx_duration(size_t size);
+
 private:
     static constexpr uint32_t F_XTAL = 32000000;
     static constexpr double F_STEP = (double) F_XTAL / (1 << 25);
@@ -76,9 +82,12 @@ private:
     size_t _spi_buf_size = 0;
     size_t _payload_len = 0;
     uint64_t _freq = 868000000;
-    uint8_t _sf = 9;
-    uint8_t _bw = 5;
-    uint8_t _cr = 5;
+    uint8_t _sf = 9;// Spreading Factor
+    uint8_t _bw = 5;// Bandwidth, see get_bw_hz()
+    uint8_t _cr = 4;// Coding Rate: 1=4/5, 2=4/6, 3=4/7, 4=4/8
+    bool _crc = false;
+    uint16_t _preamble_len = 0x40;
+    bool _ldro = false;// Low Data Rate Optimize
     float _power = 0.0f;
     bool _inited = false;
     uint8_t _rssi_packet_i = 0;
@@ -107,6 +116,36 @@ private:
     void get_packet_status();
 
     void get_rssi_inst();
+
+    /* The codes are not in bandwidth order and the narrow ones are 32 MHz
+       divided down, hence the odd values - same table as Semtech's
+       sx126x_get_lora_bw_in_hz(). */
+    uint32_t get_bw_hz() const {
+        switch (_bw) {
+            case 0:
+                return 7812;
+            case 8:
+                return 10417;
+            case 1:
+                return 15625;
+            case 9:
+                return 20833;
+            case 2:
+                return 31250;
+            case 10:
+                return 41667;
+            case 3:
+                return 62500;
+            case 4:
+                return 125000;
+            case 5:
+                return 250000;
+            case 6:
+                return 500000;
+            default:
+                return 0;
+        }
+    }
 
     void send_command(uint8_t opcode) { send_command_n(opcode, 0); }
 

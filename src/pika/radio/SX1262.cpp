@@ -66,12 +66,12 @@ void SX1262::init(size_t payload_len) {
     // write_reg(REG_SYNC_WORD + 0, 0x1F);
     // write_reg(REG_SYNC_WORD + 1, 0x35);
 
-    command_params()[0] = 0x00;       // Preamble length MSB
-    command_params()[1] = 0x40;       // Preamble length LSB
-    command_params()[2] = 0x00;       // Header type
-    command_params()[3] = payload_len;// Payload length
-    command_params()[4] = 0x00;       // CRC type
-    command_params()[5] = 0x00;       // Invert IQ
+    command_params()[0] = _preamble_len >> 8;// Preamble length MSB
+    command_params()[1] = _preamble_len;     // Preamble length LSB
+    command_params()[2] = 0x00;              // Header type
+    command_params()[3] = payload_len;       // Payload length
+    command_params()[4] = _crc ? 0x01 : 0x00;// CRC type
+    command_params()[5] = 0x00;              // Invert IQ
     command_params()[6] = 0x00;
     command_params()[7] = 0x00;
     command_params()[8] = 0x00;
@@ -359,6 +359,31 @@ RadioStats SX1262::get_stats() const {
             .noise_level = -(float) _rssi_floor_i / 2,
     };
     return stats;
+}
+
+Time SX1262::tx_duration(size_t size) {
+    const int n_crc = _crc ? 16 : 0;
+    const int n_hdr = 20;
+
+    int bits;
+    int div;
+    int fixed4;// preamble tail, in quarter symbols: 6.25 or 4.25
+    if (_sf < 7) {
+        bits = 8 * size + n_crc - 4 * _sf + n_hdr;
+        div = 4 * _sf;
+        fixed4 = 25;
+    } else {
+        bits = 8 * size + n_crc - 4 * _sf + 8 + n_hdr;
+        div = 4 * (_ldro ? _sf - 2 : _sf);
+        fixed4 = 17;
+    }
+    const int payload_syms = (bits > 0 ? (bits + div - 1) / div : 0) * (_cr + 4);
+
+    // Quarter symbols avoid floats: (4*(Npre + 8 + payload) + fixed4) / 4 symbols.
+    const uint32_t n_sym4 = 4U * (_preamble_len + 8U + (uint32_t) payload_syms) + (uint32_t) fixed4;
+    // Rounded up, so a slot sized from this never ends before the packet does.
+    const uint64_t den = 4ULL * get_bw_hz();
+    return (((uint64_t) n_sym4 << _sf) * 1000000ULL + den - 1) / den;
 }
 
 }// namespace pika::radio
