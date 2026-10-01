@@ -1,7 +1,6 @@
 #pragma once
 
 #include <pika/MAC.h>
-#include <pika/radio/SX1262.h>
 #include <pika/audio/ADCMicrophone.h>
 #include <pika/audio/DACSpeaker.h>
 #include <pika/audio/PCMPlayer.h>
@@ -10,6 +9,7 @@
 #include <pika/lcd/ST75160.h>
 #include <pika/lcd/images/pika_logo.h>
 #include <pika/log.h>
+#include <pika/radio/SX1262.h>
 
 #include <ch.h>
 #include <ch.hpp>
@@ -47,6 +47,9 @@ public:
 protected:
     static constexpr int text_row_h = 10;
     static constexpr int menu_label_x = 16;
+    static constexpr int menu_title_h = 11;
+    static constexpr int menu_title_y_offs = 2;
+    static constexpr int menu_items_y_offs = 13;
 
     App *app_{};
     Screen *parent_screen_{};
@@ -54,11 +57,11 @@ protected:
 
     Screen(App &app, Screen *parent_screen) : app_(&app), parent_screen_(parent_screen) {}
 
-    void draw_menu(std::span<MenuItem> items);
+    void draw_menu(std::span<MenuItem> items, const char *title);
 
     void update_menu_cursor(int menu_cursor);
 
-    void handle_menu_button(std::span<MenuItem> items, input::Button button);
+    bool handle_menu_button(std::span<MenuItem> items, input::Button button);
 };
 
 class AboutScreen : public Screen {
@@ -88,6 +91,26 @@ private:
     void set_backlight();
 };
 
+class MainMenuScreen : public Screen {
+public:
+    ~MainMenuScreen() = default;
+
+    MainMenuScreen(App &app, Screen *parent_screen) : Screen(app, parent_screen) {}
+
+    void draw() override;
+
+    void on_button(input::Button button) override;
+
+private:
+    AboutScreen about_screen_{*app_, this};
+    SettingsScreen settings_screen_{*app_, this};
+
+    std::array<MenuItem, 2> menu_items{{
+            {"Settings", [](void *self) { ((MainMenuScreen *) self)->settings_screen_.init_activate(); }},
+            {"About", [](void *self) { ((MainMenuScreen *) self)->about_screen_.init_activate(); }},
+    }};
+};
+
 class HomeScreen : public Screen {
 public:
     ~HomeScreen() = default;
@@ -99,13 +122,11 @@ public:
     void on_button(input::Button button) override;
 
 private:
-    AboutScreen about_screen_{*app_, this};
-    SettingsScreen settings_screen_{*app_, this};
+    MainMenuScreen main_menu_screen_{*app_, this};
 
-    std::array<MenuItem, 3> menu_items{{
-            {"Send", [](void *self) { ((HomeScreen *) self)->send_message(); }},
-            {"Settings", [](void *self) { ((HomeScreen *) self)->settings_screen_.init_activate(); }},
-            {"About", [](void *self) { ((HomeScreen *) self)->about_screen_.init_activate(); }},
+    std::array<MenuItem, 2> contacts{{
+            {"Chirp", [](void *self) {}},
+            {"Pika Lina", [](void *self) {}},
     }};
 
     void send_message();

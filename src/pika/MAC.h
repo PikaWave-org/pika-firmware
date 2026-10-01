@@ -200,6 +200,7 @@ private:
         }
         // Add new peer
         Peer *new_peer = peers_.add();
+        *new_peer = {};
         new_peer->addr = addr;
         return *new_peer;
     }
