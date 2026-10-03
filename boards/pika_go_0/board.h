@@ -94,6 +94,9 @@
 #define LINE_RADIO_SPI_MOSI         PAL_LINE(GPIOB, 15U)
 #define LINE_RADIO_BUSY             PAL_LINE(GPIOE, 7U)
 #define LINE_RADIO_DIO1             PAL_LINE(GPIOE, 8U)
+#define LINE_CHG_INT                PAL_LINE(GPIOE, 0U)
+#define LINE_CHG_I2C_SCL            PAL_LINE(GPIOD, 12U)
+#define LINE_CHG_I2C_SDA            PAL_LINE(GPIOD, 13U)
 
 /* Serial driver behind the debug UART pins above. */
 #define BOARD_DBG_SERIAL            SD3
@@ -210,6 +213,49 @@
 #define BOARD_RADIO_SPI             SPID2
 #define BOARD_RADIO_SPI_PINMODE     (PAL_MODE_ALTERNATE(5U) |                \
                                      PAL_STM32_OSPEED_HIGHEST)
+
+/*
+ * TI BQ25895 battery charger on I2C4, AF4 on SCL/SDA.
+ *
+ * The address is the 7 bit one. SCL, SDA and LINE_CHG_INT have 10k pull-ups
+ * to 3.3V next to the charger, so the pins use no internal ones. INT is
+ * active low and open drain: the charger pulses it low for 256us on a fault
+ * or a status change. It uses EXTI channel 0, which nothing else claims.
+ *
+ * I2C4 sits in the D3 domain and is served by the BDMA, which only reaches
+ * SRAM4 - the D2 SRAM buffers the LCD driver uses are out of its range.
+ */
+#define BOARD_CHG_I2C               I2CD4
+#define BOARD_CHG_I2C_ADDR          0x6AU
+
+/* Pin mode for SCL/SDA. */
+#define BOARD_CHG_I2C_PINMODE       (PAL_MODE_ALTERNATE(4U) |               \
+                                     PAL_STM32_OTYPE_OPENDRAIN |            \
+                                     PAL_STM32_OSPEED_MID2)
+
+/*
+ * Charge current and voltage the driver programs at init.
+ *
+ * These are the BQ25895's own power-on values, i.e. exactly what the board
+ * charged with before the driver existed - not a choice made for a cell. The
+ * battery on J1 is not specified anywhere in the hardware repo; set these from
+ * its datasheet (typically 0.5C to 1C, and 4.2V for a plain LiPo). The driver
+ * disables the chip's I2C watchdog, so whatever is set here stays in force
+ * even if the firmware hangs.
+ *
+ * What else bounds charging on this board, from the schematic:
+ *   - CE is strapped low, so the chip charges with or without firmware, and
+ *     OTG is strapped low, so boost mode is not available.
+ *   - R4 = 261R on ILIM caps the input at 355/261 = 1.36A.
+ *   - D+/D- are not connected, so input detection cannot identify the
+ *     adapter and settles on "unknown", which limits the input to 500mA.
+ *   - TS has the datasheet's 5.23k/30.1k network for a 10k NTC on J1 pin 2,
+ *     so JEITA temperature limits apply.
+ *   - ~QON is wired to BTN_PWR: a long press exits ship mode or resets the
+ *     charger, independent of the MCU.
+ */
+#define BOARD_CHG_ICHG_MA           2048U
+#define BOARD_CHG_VREG_MV           4208U
 
 /*===========================================================================*/
 /* External declarations.                                                    */

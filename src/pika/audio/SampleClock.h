@@ -60,8 +60,8 @@ public:
      */
     void stop_i(const void *owner);
 
-    /** @brief  True while some converter holds the clock. */
-    [[nodiscard]] bool held() const { return owner_ != nullptr; }
+    /** @brief  True while someone holds the clock. */
+    [[nodiscard]] bool is_busy() const { return owner_ != nullptr; }
 
 private:
     /*

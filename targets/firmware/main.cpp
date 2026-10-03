@@ -19,6 +19,7 @@
 #include <pika/lcd/ST75160.h>
 #include <pika/lcd/images/pika_logo.h>
 #include <pika/log.h>
+#include <pika/power/BQ25895.h>
 #include <pika/radio/SX1262.h>
 #include <pika/ublox.h>
 
@@ -27,6 +28,12 @@ static const pika::lcd::ST75160::Config display_cfg = {&BOARD_LCD_I2C, BOARD_LCD
                                                        LINE_LCD_SCL,   LINE_LCD_SDA,       BOARD_LCD_I2C_PINMODE};
 
 static pika::lcd::ST75160 display{display_cfg};
+
+/* The battery charger, wired up and charging as the board header says. */
+static const pika::power::BQ25895::Config charger_cfg = {&BOARD_CHG_I2C, BOARD_CHG_I2C_ADDR, LINE_CHG_INT,
+                                                         BOARD_CHG_ICHG_MA, BOARD_CHG_VREG_MV};
+
+static pika::power::BQ25895 charger{charger_cfg};
 
 static constexpr uint32_t bklt_pwm_hz = 1000000U;
 static constexpr pwmcnt_t bklt_period = 1000U;
@@ -96,6 +103,7 @@ static const pika::App::Config app_cfg = {.display = &display,
                                           .mic = &mic,
                                           .buttons = btn_cfg,
                                           .mac = &mac,
+                                          .charger = &charger,
                                           .backlight_pwm = &BOARD_LCD_BKLT_PWM,
                                           .backlight_ch = BOARD_LCD_BKLT_PWM_CHANNEL};
 
@@ -115,6 +123,9 @@ int main() {
     bool display_ok = display.init();
     LOG("lcd: init %s, i2c error 0x%08x", display_ok ? "ok" : "failed", (unsigned) display.last_error());
 
+    /* Initialises the chip itself, then updates on every ~INT pulse. */
+    charger.start(NORMALPRIO);
+
     bool spk_ok = spk.init();
     LOG("spk: init %s", spk_ok ? "ok" : "failed");
 
@@ -124,7 +135,7 @@ int main() {
     spiStart(&BOARD_RADIO_SPI, &radio_spi_cfg);
     LOG("radio: init");
     radio.set_mod_params(9, 5, 5);
-    radio.set_power(20.0f);
+    radio.set_power(10.0f);
     radio.init(radio_payload_len);
     LOG("radio: init done");
 
@@ -133,5 +144,12 @@ int main() {
     app.init();
     app.start(NORMALPRIO);
 
-    while (true) { chThdSleepMilliseconds(1000); }
+    while (true) {
+        const pika::BatteryStatus &chg = charger.status();
+        LOG("chg: input %u charge %u vbat %umV ichg %umA, i2c error 0x%08x", (unsigned) chg.input_connected,
+            (unsigned) chg.charging, (unsigned) chg.voltage, (unsigned) chg.charge_current,
+            (unsigned) charger.last_error());
+
+        chThdSleepMilliseconds(1000);
+    }
 }

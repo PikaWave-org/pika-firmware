@@ -11,6 +11,7 @@ pika_add_firmware(firmware
                 ${SRC_ROOT}/pika/audio/resample.cpp
                 ${SRC_ROOT}/pika/audio/SampleClock.cpp
                 ${SRC_ROOT}/pika/lcd/ST75160.cpp
+                ${SRC_ROOT}/pika/power/BQ25895.cpp
                 ${SRC_ROOT}/pika/radio/SX1262.cpp
                 ${SRC_ROOT}/pika/App.cpp
                 ${SRC_ROOT}/pika/ublox.cpp)

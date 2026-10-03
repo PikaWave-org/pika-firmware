@@ -101,6 +101,12 @@ static void stm32_gpio_init(void) {
     palSetLineMode(LINE_RADIO_BUSY, PAL_MODE_INPUT);
     palSetLineMode(LINE_RADIO_DIO1, PAL_MODE_INPUT);
 
+    /* BQ25895 charger on I2C4, AF4. SCL, SDA and INT are pulled up on the
+     board, so no internal pull-ups.*/
+    palSetLineMode(LINE_CHG_I2C_SCL, BOARD_CHG_I2C_PINMODE);
+    palSetLineMode(LINE_CHG_I2C_SDA, BOARD_CHG_I2C_PINMODE);
+    palSetLineMode(LINE_CHG_INT, PAL_MODE_INPUT);
+
     /* The HSE oscillator has to be running before stm32_clock_init().*/
     palSetLine(LINE_HSE_EN);
 }
@@ -128,4 +134,16 @@ void __early_init(void) {
 /**
  * @brief   Board-specific initialization code.
  */
-void boardInit(void) {}
+void boardInit(void) {
+
+    /* The BQ25895 driver's buffers sit in SRAM4, the only memory I2C4's BDMA
+     reaches. ChibiOS's one nocache region already covers the D2 buffers, so
+     SRAM4 gets a second one here: halInit() has enabled the MPU by now, and
+     region 7 is reserved for the ChibiOS stack guard. Nothing has touched
+     SRAM4 yet, but the cache is cleaned anyway so the new attributes cannot
+     meet a stale line.*/
+    mpuConfigureRegion(MPU_REGION_5, 0x38000000U,
+                       MPU_RASR_ATTR_AP_RW_RW | MPU_RASR_ATTR_NON_CACHEABLE | MPU_RASR_ATTR_S | MPU_RASR_SIZE_16K |
+                               MPU_RASR_ENABLE);
+    SCB_CleanInvalidateDCache();
+}

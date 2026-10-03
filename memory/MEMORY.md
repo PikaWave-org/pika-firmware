@@ -18,7 +18,7 @@ design rules in CLAUDE.md instead of here.
 
 ## Traps that cost a session each
 
-- [I2C DMA silently moves nothing](i2c-dma-silently-broken.md) — DMA needs D2 SRAM buffers *and* an MPU no-cache region, or it transfers zero bytes and reports success.
+- [I2C DMA silently moves nothing](i2c-dma-silently-broken.md) — DMA needs D2 SRAM buffers *and* an MPU no-cache region, or it transfers zero bytes and reports success; I2C4 (BDMA) needs SRAM4 instead.
 - [Busy-waits starve every thread](chibios-busy-wait-starves-threads.md) — round-robin is off, so one unbounded spin stops the whole board and looks like a hard fault.
 
 ## Working on the hardware

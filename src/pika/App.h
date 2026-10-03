@@ -6,9 +6,12 @@
 #include <pika/audio/PCMPlayer.h>
 #include <pika/audio/tone_generator.h>
 #include <pika/buttons.h>
+#include <pika/gfx/Canvas.h>
 #include <pika/lcd/ST75160.h>
 #include <pika/lcd/images/pika_logo.h>
 #include <pika/log.h>
+#include <pika/power/BQ25895.h>
+#include <pika/power/BatteryStatus.h>
 #include <pika/radio/SX1262.h>
 
 #include <ch.h>
@@ -21,6 +24,18 @@
 namespace pika {
 
 class App;
+
+class StatusBar {
+public:
+    static constexpr int status_bar_h = 10;
+
+    explicit StatusBar(App &app) : app_(&app) {}
+
+    void draw();
+
+private:
+    App *app_{};
+};
 
 struct MenuItem {
     const char *name;
@@ -44,12 +59,14 @@ public:
 
     virtual void on_button(input::Button button) = 0;
 
+    virtual bool show_status_bar() const { return true; }
+
 protected:
     static constexpr int text_row_h = 10;
     static constexpr int menu_label_x = 16;
     static constexpr int menu_title_h = 11;
-    static constexpr int menu_title_y_offs = 2;
-    static constexpr int menu_items_y_offs = 13;
+    static constexpr int menu_title_y_offs = StatusBar::status_bar_h;
+    static constexpr int menu_items_y_offs = menu_title_y_offs + menu_title_h + 1;
 
     App *app_{};
     Screen *parent_screen_{};
@@ -71,6 +88,8 @@ public:
     void draw() override;
 
     void on_button(input::Button button) override;
+
+    bool show_status_bar() const override { return false; };
 };
 
 class SettingsScreen : public Screen {
@@ -134,30 +153,33 @@ private:
 
 class App : public chibios_rt::BaseStaticThread<1024> {
 public:
+    using Canvas = gfx::Canvas<lcd::ST75160::Framebuffer>;
+
     struct Config {
         lcd::ST75160 *display;
         audio::DACSpeaker *speaker;
         audio::ADCMicrophone *mic;
         input::Buttons::Config buttons;
         MAC<radio::SX1262> *mac;
+        power::BQ25895 *charger;
         PWMDriver *backlight_pwm;
         pwmchannel_t backlight_ch;
     };
 
-    explicit App(const Config &cfg) : cfg_(cfg), buttons_(cfg.buttons) {}
+    explicit App(const Config &cfg) : cfg_(cfg), canvas_(cfg.display->framebuffer()), buttons_(cfg.buttons) {}
 
     void main() override;
 
     void init();
 
     void activate_screen(Screen &screen) {
-        cfg_.display->clear();
+        canvas_.clear();
         active_screen_ = &screen;
         active_screen_->draw();
         cfg_.display->flush();
     }
 
-    lcd::ST75160 &display() { return *cfg_.display; }
+    Canvas &canvas() { return canvas_; }
 
     MAC<radio::SX1262> &mac() { return *cfg_.mac; }
 
@@ -165,15 +187,23 @@ public:
 
     void set_backlight(int brightness);
 
+    void do_set_backlight(int brightness);
+
+    const BatteryStatus &battery_status() const { return cfg_.charger->status(); }
+
 private:
     Config cfg_;
+    Canvas canvas_;
     input::Buttons buttons_;
     audio::PCMPlayer pcm_player;
     audio::ToneGenerator tone_gen;
 
+    StatusBar status_bar_{*this};
     HomeScreen home_screen_{*this};
     Screen *active_screen_{&home_screen_};
     int backlight_brightness_{};
+    systime_t backlight_wake_ = 0;
+    sysinterval_t backlight_timeout_ = TIME_S2I(5);
 };
 
 }// namespace pika

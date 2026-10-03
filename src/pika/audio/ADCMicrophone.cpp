@@ -31,11 +31,6 @@ bool ADCMicrophone::init() {
         return false;
     }
 
-    if (!cfg_.clock->init()) {
-        adcStop(cfg_.adc);
-        return false;
-    }
-
     ready_ = true;
     return true;
 }
@@ -56,7 +51,7 @@ bool ADCMicrophone::start_capture() {
     /* An early out, not the interlock: it saves powering the preamp up for
      20ms only to find the speaker talking. The claim below is what actually
      decides, and it is checked under the system lock. */
-    if (cfg_.clock->held()) {
+    if (cfg_.clock->is_busy()) {
         LOG("error: sample clock is busy");
         return false;
     }

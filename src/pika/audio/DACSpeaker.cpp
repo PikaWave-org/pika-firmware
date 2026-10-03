@@ -87,11 +87,6 @@ bool DACSpeaker::init() {
         return false;
     }
 
-    if (!cfg_.clock->init()) {
-        dacStop(cfg_.dac);
-        return false;
-    }
-
     chThdSleepMilliseconds(cfg_.settle_ms);
 
     ready_ = true;

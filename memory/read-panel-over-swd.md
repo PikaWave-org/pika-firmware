@@ -13,8 +13,9 @@ there.
 
 The buffer is `frame_tx + 1` in D2 SRAM, the byte after the I2C control byte -
 **0x30004801** on the images built here, but take it from the running object
-rather than trusting that number: `_ZL3lcd`'s `fb_` member holds it, at offset
-0x1c into the object (still so on 2026-09-17 after the ST75160 rewrite;
+rather than trusting that number: `_ZL7display`'s `fb_.bits_` holds it, at
+offset 0x18 into the object, with the dirty page mask `fb_.dirty_` at 0x1c
+(so on 2026-10-03, after drawing moved out to `pika/gfx/Canvas.h`;
 `gdb-multiarch -batch -ex "ptype/o pika::lcd::ST75160" firmware.elf` shows
 the layout). `arm-none-eabi-nm -S` gives both symbols.
 
@@ -27,7 +28,7 @@ it is immune to the command-file bug in [[swd-run-control-and-fake-presses]].
 **Do not halt** - a halt stops the boot you were measuring, and the debug log
 with it.
 
-Decoding takes both transforms in `ST75160::pixel()` together, and getting
+Decoding takes both transforms in `ST75160::Framebuffer::set_pixel()` together, and getting
 either one wrong still produces plausible-looking noise:
 
     yy = 99 - y                              # rows run bottom to top
@@ -35,7 +36,7 @@ either one wrong still produces plausible-looking noise:
 
 Text comes back exactly by lifting the 8x8 cell at `(x0 + 0..7, y0 + 0..7)`
 into eight row bytes, bit b of row r being the pixel at `x0 + b`, and looking
-that up in the `font8x8` table in `src/pika/lcd/Font8x8.h`. Every glyph matches
+that up in the `font8x8` table in `src/pika/gfx/Font8x8.h`. Every glyph matches
 a table entry exactly - if some come back as misses, the bit order is wrong,
 not the font.
 

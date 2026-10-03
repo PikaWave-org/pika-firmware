@@ -28,7 +28,8 @@
  *
  * AXI SRAM     - BSS, Data, Heap.
  * SRAM1+SRAM2  - NOCACHE (the I2C buffers), ETH.
- * SRAM4        - None.
+ * SRAM4        - The I2C4 buffers, the only memory its BDMA reaches; made
+ *                non-cacheable by an MPU region in board.c.
  * DTCM-RAM     - Main Stack, Process Stack. Note: no DMA controller here can
  *                reach DTCM, so nothing handed to a driver may live on a
  *                thread stack.

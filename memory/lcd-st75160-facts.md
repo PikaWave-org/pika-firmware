@@ -7,7 +7,9 @@ metadata:
 
 Newhaven NHD-C160100DiZ-FSW-FBW **Rev1C** (label on the module back), 160x100,
 ST75160i controller, I2C address **0x3F**, max 400kHz. Driver lives in
-`src/pika/lcd/ST75160.cpp`.
+`src/pika/lcd/ST75160.cpp`, framebuffer layout included
+(`ST75160::Framebuffer`); drawing is separate and pixel-only, in
+`src/pika/gfx/Canvas.h`.
 
 - Monochrome mode (`0xF0`,`0x10`): one byte is **8 vertical pixels**, and
   **D7 is the top** row of the page - the opposite of the SSD1306/u8g2
@@ -28,8 +30,8 @@ ST75160i controller, I2C address **0x3F**, max 400kHz. Driver lives in
   **Vop 150..250 (9.6V..13.6V) is the usable range**, confirmed by eye on
   Rev1C: legible across the whole span, visibly light at the bottom and dark
   at the top. That is what the menu's contrast setting exposes.
-- The panel's rows run **bottom to top**: `pixel()` flips y so the driver API
-  has a top-left origin. There is no command for this - `0xBC` only sets the
+- The panel's rows run **bottom to top**: `ST75160::Framebuffer::set_pixel()`
+  flips y so the drawing API has a top-left origin. There is no command for this - `0xBC` only sets the
   address scan direction and column order, and **COMSCN has no effect on
   Rev1C** (FPC pin 1 is unconnected; driving it high or low was tried on
   hardware and changed nothing).

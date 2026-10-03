@@ -3,10 +3,10 @@
 
 #include "ST75160.h"
 
-#include <algorithm>
-
 namespace pika::lcd {
 namespace {
+
+using Framebuffer = ST75160::Framebuffer;
 
 /*
  * I2C control bytes. Bit 7 is Co ("another control byte follows the data
@@ -87,7 +87,7 @@ const uint8_t init_script[] = {
  */
 #define DMA_BUF __attribute__((section(".nocache"), aligned(4)))
 
-DMA_BUF uint8_t frame_tx[1 + ST75160::fb_size]; /* control byte + frame */
+DMA_BUF uint8_t frame_tx[1 + Framebuffer::size]; /* control byte + frame */
 
 /*
  * Scratch for run_co1(): a whole script emitted as one transaction with Co=1
@@ -169,7 +169,8 @@ bool ST75160::init() {
     error_flags_ = 0U;
     ready_ = false;
     frame_tx[0] = ctrl_data;
-    clear();
+    for (unsigned i = 0U; i < Framebuffer::size; i++) { fb_.bits_[i] = 0U; }
+    fb_.dirty_ = Framebuffer::all_pages;
 
     /* Reset pulse. The datasheet only asks for 1us low and 1ms of settling,
      but the vendor's reference code uses 200ms and 100ms, so use those.*/
@@ -196,43 +197,26 @@ bool ST75160::init() {
     return true;
 }
 
-void ST75160::clear(bool on) {
-    uint8_t v = on ? 0xFFU : 0x00U;
-    for (unsigned i = 0U; i < fb_size; i++) { fb_[i] = v; }
-    dirty_first_ = 0;
-    dirty_last_ = pages - 1;
-}
-
-/*
- * Pages are clamped rather than rows clipped: a block partly off the panel
- * marks the pages it reaches, one entirely off marks a strip at that edge,
- * which costs a needless page on the next flush and nothing else. Columns are
- * not looked at for the same reason.
- */
-void ST75160::mark_rows(int y, int h) {
-    /* The flip in set_pixel() puts the top row on the highest page. */
-    dirty_first_ = std::min(dirty_first_, std::max((height - y - h) / 8, 0));
-    dirty_last_ = std::max(dirty_last_, std::min((height - 1 - y) / 8, pages - 1));
-}
-
 bool ST75160::flush() {
     if (!ready_) {
         return false;
     }
 
-    if (dirty_first_ > dirty_last_) {
+    if (fb_.dirty_ == 0U) {
         return true;
     }
+    const int first = __builtin_ctz(fb_.dirty_);
+    const int last = 31 - __builtin_clz(fb_.dirty_);
 
     /* Window the pending pages across the full width. 0x5C rewinds the column
        and page counters to the start of the window, after which the column
        address auto-increments per byte and rolls over into the next page, so
        the pages go out as one stream. */
     const uint8_t addr[] = {
-            CMD(0x30),                            /* extension command set 1 */
-            CMD(0x15), PAR(0x00), PAR(width - 1), /* columns 0..159          */
-            CMD(0x75), PAR(dirty_first_), PAR(dirty_last_),      /* pending pages           */
-            CMD(0x5C)                             /* write data              */
+            CMD(0x30),                                         /* extension command set 1 */
+            CMD(0x15), PAR(0x00), PAR(Framebuffer::width - 1), /* columns 0..159          */
+            CMD(0x75), PAR(first), PAR(last),                  /* dirty pages             */
+            CMD(0x5C)                                          /* write data              */
     };
     if (!run_co1(addr, sizeof addr)) {
         return false;
@@ -243,16 +227,15 @@ bool ST75160::flush() {
        ctrl_data, or the last byte of a page that is not being sent - so it is
        borrowed and put back rather than copying the pages to a staging buffer.
        Put back on failure too, or the retry would paint 0x40 onto the panel. */
-    uint8_t *p = &frame_tx[(unsigned) dirty_first_ * width];
+    uint8_t *p = &frame_tx[(unsigned) first * Framebuffer::width];
     const uint8_t saved = *p;
     *p = ctrl_data;
-    const bool ok = xfer(p, (size_t) (dirty_last_ - dirty_first_ + 1) * width + 1U, TIME_MS2I(500));
+    const bool ok = xfer(p, (size_t) (last - first + 1) * Framebuffer::width + 1U, TIME_MS2I(500));
     *p = saved;
 
     /* Only on success, so a failed flush is retried rather than dropped. */
     if (ok) {
-        dirty_first_ = pages;
-        dirty_last_ = -1;
+        fb_.dirty_ = 0U;
     }
     return ok;
 }

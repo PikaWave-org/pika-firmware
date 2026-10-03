@@ -1,26 +1,36 @@
 #include "App.h"
 
+#include "chprintf.h"
+
 namespace pika {
+
+void StatusBar::draw() {
+    app_->canvas().rect<false>(0, 0, 160, status_bar_h);
+    char buf[20];
+    chsnprintf(buf, sizeof(buf), "%s %.2f", app_->battery_status().charging != Charge::off ? "CHG" : "   ",
+               app_->battery_status().voltage / 1000.0f);
+    app_->canvas().text<true>(2, 0, buf);
+}
 
 void Screen::activate() { app_->activate_screen(*this); }
 
 void Screen::draw_menu(std::span<MenuItem> items, const char *title) {
-    app_->display().rect<true>(0, 0, 160, menu_title_h);
-    app_->display().text<false>(2, menu_title_y_offs, title);
+    app_->canvas().rect<true>(0, menu_title_y_offs, 160, menu_title_h);
+    app_->canvas().text<false>(2, menu_title_y_offs + 2, title);
 
     for (size_t i = 0; i < items.size(); i++) {
         const int row_y = (int) i * text_row_h + menu_items_y_offs;
-        app_->display().text(menu_label_x, row_y, items[i].name);
+        app_->canvas().text(menu_label_x, row_y, items[i].name);
     }
     update_menu_cursor(menu_cursor_);
 }
 
 void Screen::update_menu_cursor(int menu_cursor) {
     if (menu_cursor != menu_cursor_) {
-        app_->display().text<false>(4, menu_cursor_ * text_row_h + menu_items_y_offs, ">");
+        app_->canvas().text<false>(4, menu_cursor_ * text_row_h + menu_items_y_offs, ">");
     }
     menu_cursor_ = menu_cursor;
-    app_->display().text(4, menu_cursor_ * text_row_h + menu_items_y_offs, ">");
+    app_->canvas().text(4, menu_cursor_ * text_row_h + menu_items_y_offs, ">");
 }
 
 bool Screen::handle_menu_button(std::span<MenuItem> items, input::Button button) {
@@ -49,9 +59,9 @@ bool Screen::handle_menu_button(std::span<MenuItem> items, input::Button button)
 }
 
 void AboutScreen::draw() {
-    app_->display().clear();
-    app_->display().bitmap(0, 0, pika::lcd::pika_logo_width, pika::lcd::pika_logo_height, pika::lcd::pika_logo);
-    app_->display().text(80, 92, BOARD_NAME);
+    app_->canvas().clear();
+    app_->canvas().bitmap(0, 0, pika::lcd::pika_logo_width, pika::lcd::pika_logo_height, pika::lcd::pika_logo);
+    app_->canvas().text(80, 92, BOARD_NAME);
 }
 
 void AboutScreen::on_button(input::Button) {
@@ -82,7 +92,7 @@ void HomeScreen::on_button(input::Button button) {
         case input::Button::ptt:
             send_message();
             return;
-        case input::Button::left:
+        case input::Button::pwr:
             main_menu_screen_.init_activate();
             return;
         default:
@@ -103,22 +113,32 @@ void App::main() {
     chEvtRegister(&buttons_.events(), &listener, 0);
 
     while (true) {
-        chEvtWaitAny(EVENT_MASK(0));
+        if (chEvtWaitAnyTimeout(EVENT_MASK(0), TIME_S2I(1))) {
+            systime_t now = chVTGetSystemTime();
+            const eventflags_t flags = chEvtGetAndClearFlags(&listener);
+            for (unsigned i = 0; i < input::Buttons::count; i++) {
+                const auto btn = (input::Button) i;
 
-        const eventflags_t flags = chEvtGetAndClearFlags(&listener);
+                if ((flags & buttons_.flag(btn)) == 0U) {
+                    continue;
+                }
 
-        for (unsigned i = 0; i < input::Buttons::count; i++) {
-            const auto btn = (input::Button) i;
-
-            if ((flags & buttons_.flag(btn)) == 0U) {
-                continue;
+                if (active_screen_ != nullptr) {
+                    LOG("on_button %s", input::Buttons::name(btn));
+                    backlight_wake_ = now;
+                    active_screen_->on_button(btn);
+                    cfg_.display->flush();
+                }
             }
-
-            if (active_screen_ != nullptr) {
-                LOG("on_button %s", input::Buttons::name(btn));
-                active_screen_->on_button(btn);
-                cfg_.display->flush();
-            }
+        }
+        if (active_screen_->show_status_bar()) {
+            status_bar_.draw();
+            cfg_.display->flush();
+        }
+        if (chVTTimeElapsedSinceX(backlight_wake_) >= backlight_timeout_) {
+            do_set_backlight(0);
+        } else {
+            do_set_backlight(backlight_brightness_);
         }
     }
 }
@@ -134,7 +154,9 @@ void App::init() {
 void App::set_backlight(int brightness) {
     LOG("Setting backlight to %d/%d", brightness, cfg_.backlight_pwm->config->period);
     backlight_brightness_ = brightness;
-    pwmEnableChannel(cfg_.backlight_pwm, cfg_.backlight_ch, brightness);
+    do_set_backlight(backlight_brightness_);
 }
+
+void App::do_set_backlight(int brightness) { pwmEnableChannel(cfg_.backlight_pwm, cfg_.backlight_ch, brightness); }
 
 }// namespace pika

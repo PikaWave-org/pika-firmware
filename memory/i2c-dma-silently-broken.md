@@ -21,6 +21,15 @@ moves at all** - unless two things are both true:
    over exactly that area; verified on hardware 2026-09-12 with the D-cache
    on (`SCB_CCR` DC=1) and the region reading back non-cacheable.
 
+**I2C4 is the exception** (the BQ25895 charger, `src/pika/power/BQ25895.cpp`):
+it is a D3 peripheral served by the **BDMA**, which reaches only **SRAM4**
+(`0x38000000`, the `.ram4` section) - D2 `.nocache` is as unreachable to it as
+DTCM. ChibiOS has one nocache MPU region, so `boardInit()` adds region 5 over
+SRAM4 (region 7 is the ChibiOS stack guard). Verified on hardware 2026-10-01
+by reading the buffers over SWD: the REG02 read-modify-write came back as the
+chip's 0x3D default with CONV_START set, and the ADC results were plausible.
+SPI6 and any other BDMA user needs the same placement.
+
 **Why:** the cache half of this is invisible from the I2C side and cost a
 whole LCD bring-up session. The wrong conclusion that started it was "nothing
 enables the D-cache in this build", from grepping `crt0_v7m.S` and

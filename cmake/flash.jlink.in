@@ -1,5 +1,6 @@
 exitonerror 1
 loadfile @FLASH_HEX@
-r
-g
-qc
+reset
+go
+sleep 500
+exit

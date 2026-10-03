@@ -315,12 +315,16 @@
  * panel afterwards: the bring-up image that main() draws is the test, since
  * a transport that moves nothing leaves the display blank while every return
  * code stays clean.
+ *
+ * I2C4 (the charger) is the exception to the first half: it is served by the
+ * BDMA, which reaches only SRAM4, so its buffers live there instead and
+ * board.c gives SRAM4 its own non-cacheable MPU region.
  */
 #define STM32_I2C_USE_DMA                   TRUE
 #define STM32_I2C_USE_I2C1                  TRUE
 #define STM32_I2C_USE_I2C2                  FALSE
 #define STM32_I2C_USE_I2C3                  FALSE
-#define STM32_I2C_USE_I2C4                  FALSE
+#define STM32_I2C_USE_I2C4                  TRUE
 #define STM32_I2C_USE_I2C5                  FALSE
 #define STM32_I2C_BUSY_TIMEOUT              50
 #define STM32_I2C_I2C1_RX_DMA_STREAM        STM32_DMA_STREAM_ID_ANY
