@@ -145,11 +145,6 @@ int main() {
     app.start(NORMALPRIO);
 
     while (true) {
-        const pika::BatteryStatus &chg = charger.status();
-        LOG("chg: input %u charge %u vbat %umV ichg %umA, i2c error 0x%08x", (unsigned) chg.input_connected,
-            (unsigned) chg.charging, (unsigned) chg.voltage, (unsigned) chg.charge_current,
-            (unsigned) charger.last_error());
-
         chThdSleepMilliseconds(1000);
     }
 }
