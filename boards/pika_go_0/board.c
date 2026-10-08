@@ -107,6 +107,24 @@ static void stm32_gpio_init(void) {
     palSetLineMode(LINE_CHG_I2C_SDA, BOARD_CHG_I2C_PINMODE);
     palSetLineMode(LINE_CHG_INT, PAL_MODE_INPUT);
 
+    /* USB3300 PHY on the OTG_HS ULPI port, AF10. RESET is active high and is
+     cleared before the pin becomes an output: the PHY runs, and is not
+     back-fed through the pad while VBUS is absent and it has no supply.*/
+    palClearLine(LINE_USB_PHY_RESET);
+    palSetLineMode(LINE_USB_PHY_RESET, PAL_MODE_OUTPUT_PUSHPULL);
+    palSetLineMode(LINE_USB_ULPI_CK, BOARD_USB_ULPI_PINMODE);
+    palSetLineMode(LINE_USB_ULPI_DIR, BOARD_USB_ULPI_PINMODE);
+    palSetLineMode(LINE_USB_ULPI_NXT, BOARD_USB_ULPI_PINMODE);
+    palSetLineMode(LINE_USB_ULPI_STP, BOARD_USB_ULPI_PINMODE);
+    palSetLineMode(LINE_USB_ULPI_D0, BOARD_USB_ULPI_PINMODE);
+    palSetLineMode(LINE_USB_ULPI_D1, BOARD_USB_ULPI_PINMODE);
+    palSetLineMode(LINE_USB_ULPI_D2, BOARD_USB_ULPI_PINMODE);
+    palSetLineMode(LINE_USB_ULPI_D3, BOARD_USB_ULPI_PINMODE);
+    palSetLineMode(LINE_USB_ULPI_D4, BOARD_USB_ULPI_PINMODE);
+    palSetLineMode(LINE_USB_ULPI_D5, BOARD_USB_ULPI_PINMODE);
+    palSetLineMode(LINE_USB_ULPI_D6, BOARD_USB_ULPI_PINMODE);
+    palSetLineMode(LINE_USB_ULPI_D7, BOARD_USB_ULPI_PINMODE);
+
     /* The HSE oscillator has to be running before stm32_clock_init().*/
     palSetLine(LINE_HSE_EN);
 }

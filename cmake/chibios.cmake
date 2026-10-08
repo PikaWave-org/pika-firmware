@@ -160,7 +160,7 @@ function(pika_add_firmware name)
     configure_file("${PROJECT_ROOT}/cmake/flash.jlink.in"
             "${CMAKE_CURRENT_BINARY_DIR}/${name}.jlink" @ONLY)
     add_custom_target(flash-${name}
-            COMMAND sh -c "JLinkExe -nogui 1 -device ${BOARD_JLINK_DEVICE} -if SWD -speed 4000 -autoconnect 1 < ${CMAKE_CURRENT_BINARY_DIR}/${name}.jlink"
+            COMMAND sh -c "JLinkExe -nogui 1 -device ${BOARD_CHIP} -if SWD -speed 4000 -autoconnect 1 < ${CMAKE_CURRENT_BINARY_DIR}/${name}.jlink"
             DEPENDS ${name}.elf
             USES_TERMINAL VERBATIM
             COMMENT "Flashing ${name}.hex via J-Link")
@@ -173,7 +173,7 @@ function(pika_add_firmware name)
     configure_file("${PROJECT_ROOT}/cmake/gdbinit.in"
             "${CMAKE_CURRENT_BINARY_DIR}/${name}.gdbinit" @ONLY)
     add_custom_target(debug-${name}
-            COMMAND JLinkGDBServerCLExe -device ${BOARD_JLINK_DEVICE} -if SWD
+            COMMAND JLinkGDBServerCLExe -device ${BOARD_CHIP} -if SWD
                     -speed 4000 -port ${GDB_PORT} -nogui -singlerun
                     -rtos GDBServer/RTOSPlugin_ChibiOS
             DEPENDS ${name}.elf

@@ -125,7 +125,7 @@ and the round trip, over seven signals. All of it passed on 2026-09-19.
 
 ## Cost on the board
 
-Built `-O2` for Cortex-M7 (see `cmake/melpe.cmake` for why the level is
+Built `-O2` for Cortex-M7 (see `src/melpe/sources.cmake` for why the level is
 forced). The whole library is **228KB flash, 26KB RAM**; what a firmware image
 actually pays is less, because `--gc-sections` drops what nothing calls.
 

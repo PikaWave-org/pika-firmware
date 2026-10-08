@@ -97,6 +97,19 @@
 #define LINE_CHG_INT                PAL_LINE(GPIOE, 0U)
 #define LINE_CHG_I2C_SCL            PAL_LINE(GPIOD, 12U)
 #define LINE_CHG_I2C_SDA            PAL_LINE(GPIOD, 13U)
+#define LINE_USB_PHY_RESET          PAL_LINE(GPIOD, 4U)
+#define LINE_USB_ULPI_CK            PAL_LINE(GPIOA, 5U)
+#define LINE_USB_ULPI_DIR           PAL_LINE(GPIOC, 2U)
+#define LINE_USB_ULPI_NXT           PAL_LINE(GPIOC, 3U)
+#define LINE_USB_ULPI_STP           PAL_LINE(GPIOC, 0U)
+#define LINE_USB_ULPI_D0            PAL_LINE(GPIOA, 3U)
+#define LINE_USB_ULPI_D1            PAL_LINE(GPIOB, 0U)
+#define LINE_USB_ULPI_D2            PAL_LINE(GPIOB, 1U)
+#define LINE_USB_ULPI_D3            PAL_LINE(GPIOB, 10U)
+#define LINE_USB_ULPI_D4            PAL_LINE(GPIOB, 11U)
+#define LINE_USB_ULPI_D5            PAL_LINE(GPIOB, 12U)
+#define LINE_USB_ULPI_D6            PAL_LINE(GPIOB, 13U)
+#define LINE_USB_ULPI_D7            PAL_LINE(GPIOB, 5U)
 
 /* Serial driver behind the debug UART pins above. */
 #define BOARD_DBG_SERIAL            SD3
@@ -256,6 +269,31 @@
  */
 #define BOARD_CHG_ICHG_MA           2048U
 #define BOARD_CHG_VREG_MV           4208U
+
+/*
+ * Microchip USB3300 high speed PHY on the OTG_HS ULPI port, AF10 on all
+ * twelve ULPI pins.
+ *
+ * ULPI_CK is an input here: the PHY generates the 60MHz bus clock on its
+ * CLKOUT pin. The PHY's own reference on XI is not an MCU pin - it is the same
+ * 24MHz oscillator as the HSE, through R11, so the PHY has no clock unless
+ * LINE_HSE_EN is high.
+ *
+ * DIR and NXT are on PC2_C/PC3_C, the ADC pads that reach PC2/PC3 only
+ * through the SYSCFG_PMCR analog switches; this package does not bond PC2 and
+ * PC3 out on their own. Both switches come out of reset closed on this part
+ * (PMCR = 0x03000000, read on the board), so nothing has to write PMCR. The
+ * switch adds a few hundred ohms in series, which is worth remembering if the
+ * link misbehaves at 60MHz.
+ *
+ * The PHY's 3.3V is an LP5907 enabled by VBUS, so the PHY is only powered
+ * while a cable is plugged in; the port is device only (ID and CPEN are not
+ * connected). LINE_USB_PHY_RESET is active high and comes up low, with the
+ * PHY out of reset: driving it high into an unpowered PHY would back-feed its
+ * supply through the pad.
+ */
+#define BOARD_USB_ULPI_PINMODE      (PAL_MODE_ALTERNATE(10U) |               \
+                                     PAL_STM32_OSPEED_HIGHEST)
 
 /*===========================================================================*/
 /* External declarations.                                                    */
