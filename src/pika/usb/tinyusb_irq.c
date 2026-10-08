@@ -1,0 +1,21 @@
+#include "ch.h"
+#include "hal.h"
+#include "tusb.h"
+
+OSAL_IRQ_HANDLER(STM32_OTG2_HANDLER) {
+    OSAL_IRQ_PROLOGUE();
+    tud_int_handler(BOARD_TUD_RHPORT);
+    OSAL_IRQ_EPILOGUE();
+}
+
+OSAL_IRQ_HANDLER(STM32_OTG2_EP1IN_HANDLER) {
+     OSAL_IRQ_PROLOGUE();
+     tud_int_handler(BOARD_TUD_RHPORT);
+     OSAL_IRQ_EPILOGUE();
+}
+
+OSAL_IRQ_HANDLER(STM32_OTG2_EP1OUT_HANDLER) {
+     OSAL_IRQ_PROLOGUE();
+     tud_int_handler(BOARD_TUD_RHPORT);
+     OSAL_IRQ_EPILOGUE();
+}

@@ -22,6 +22,7 @@
 #include <pika/power/BQ25895.h>
 #include <pika/radio/SX1262.h>
 #include <pika/ublox.h>
+#include <pika/usb/TinyUSBTask.h>
 
 /* The panel, wired up as the board header describes it. */
 static const pika::lcd::ST75160::Config display_cfg = {&BOARD_LCD_I2C, BOARD_LCD_I2C_ADDR, LINE_LCD_RST,
@@ -109,9 +110,22 @@ static const pika::App::Config app_cfg = {.display = &display,
 
 static pika::App app{app_cfg};
 
+static pika::usb::TinyUSBTask usb;
+
 int main() {
     halInit();
     chSysInit();
+
+    rccEnableUSB1_OTG_HS(true);
+    rccEnableUSB1_HSULPI(true);
+    nvicEnableVector(STM32_OTG2_NUMBER, STM32_USB_OTG2_IRQ_PRIORITY);
+    nvicEnableVector(STM32_OTG2_EP1IN_NUMBER, STM32_USB_OTG2_IRQ_PRIORITY);
+    nvicEnableVector(STM32_OTG2_EP1OUT_NUMBER, STM32_USB_OTG2_IRQ_PRIORITY);
+
+    // Reset USB
+    palSetLine(LINE_USB_PHY_RESET);
+    chThdSleepMilliseconds(20);
+    palClearLine(LINE_USB_PHY_RESET);
 
     pika::log_init();
     LOG("\r\n" BOARD_NAME " starting");
@@ -143,6 +157,8 @@ int main() {
 
     app.init();
     app.start(NORMALPRIO);
+
+    usb.start(HIGHPRIO);
 
     while (true) {
         chThdSleepMilliseconds(1000);

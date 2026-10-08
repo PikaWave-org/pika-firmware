@@ -1,0 +1,3 @@
+# BQ25895 battery charger driver.
+
+file(GLOB PIKA_POWER_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/*.cpp")

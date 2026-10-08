@@ -8,14 +8,18 @@ pika_add_firmware(firmware
                 ${PIKA_AUDIO_SOURCES}
                 ${PIKA_LCD_SOURCES}
                 ${PIKA_POWER_SOURCES}
+                ${PIKA_USB_SOURCES}
                 ${PIKA_RADIO_SOURCES}
-                ${MELPE_SOURCES})
+                ${MELPE_SOURCES}
+                ${TINYUSB_SOURCES})
 
 target_include_directories(firmware.elf SYSTEM PRIVATE ${TINYUSB_INCLUDE_DIRS})
 
 set_source_files_properties(${MELPE_SOURCES} PROPERTIES
         COMPILE_OPTIONS "${MELPE_COMPILE_OPTIONS}"
         INCLUDE_DIRECTORIES "${MELPE_ROOT}")
+set_source_files_properties(${TINYUSB_SOURCES} PROPERTIES
+        COMPILE_OPTIONS "${TINYUSB_COMPILE_OPTIONS}")
 
 target_compile_definitions(firmware.elf PRIVATE CHPRINTF_USE_FLOAT=TRUE)
 
