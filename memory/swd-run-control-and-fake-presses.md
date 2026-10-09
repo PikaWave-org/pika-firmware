@@ -53,14 +53,16 @@ a real low level for the polled one. Halt, write PUPDR, resume, wait past the
 debounce, then write it back. GPIOD PUPDR is 0x58020C0C, GPIOE 0x5802100C.
 EXTI is 0x58000000 and SYSCFG_EXTICR1 is 0x58000408.
 
-All three navigation buttons live in GPIOD PUPDR, which rests at **0x10501000**,
-so a press is one whole-register write and needs no read-modify-write:
+All three navigation buttons live in GPIOD PUPDR, which rests at **0x10501010**,
+so a press is one whole-register write and needs no read-modify-write. Bits
+5:4 are the SD card's CMD pull-up (PD2): a value without them leaves CMD
+floating until the next reset.
 
 | press | write to 0x58020C0C | pad | PUPDR bits |
 |-------|---------------------|-----|------------|
-| UP    | 0x10601000          | PD10 | 21:20 |
-| DOWN  | 0x10901000          | PD11 | 23:22 |
-| RIGHT | 0x20501000          | PD14 | 29:28 |
+| UP    | 0x10601010          | PD10 | 21:20 |
+| DOWN  | 0x10901010          | PD11 | 23:22 |
+| RIGHT | 0x20501010          | PD14 | 29:28 |
 
 RIGHT is both "open the menu" and "activate", so `right, down, right` reaches
 the second menu entry from the home screen. Confirmed twice on 2026-09-16, from

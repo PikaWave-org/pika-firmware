@@ -54,6 +54,7 @@ set(CHIBIOS_SOURCES
         # (SPIv3/driver_v2.mk) and STM32H7xx/hal_lld.h defines
         # HAL_LLD_SELECT_SPI_V2, so hal_spi.h expects the v2 driver fields.
         "${CHIBIOS_LLD}/SPIv3/hal_spi_v2_lld.c"
+        "${CHIBIOS_LLD}/SDMMCv2/hal_sdc_lld.c"
         "${CHIBIOS_LLD}/SYSTICKv1/hal_st_lld.c"
         "${CHIBIOS_LLD}/USARTv3/hal_serial_lld.c")
 

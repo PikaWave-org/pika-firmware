@@ -26,8 +26,8 @@
  * section layout its startup code expects, and the link picks them up from
  * the --library-path set in cmake/chibios.cmake.
  *
- * AXI SRAM     - BSS, Data, Heap.
- * SRAM1+SRAM2  - NOCACHE (the I2C buffers), ETH.
+ * AXI SRAM     - BSS, Data, Heap; top 8K: SDMMC1 DMA buffers, non-cacheable.
+ * SRAM1+SRAM2  - NOCACHE (DMA buffers), ETH.
  * SRAM4        - The I2C4 buffers, the only memory its BDMA reaches; made
  *                non-cacheable by an MPU region in board.c.
  * DTCM-RAM     - Main Stack, Process Stack. Note: no DMA controller here can
@@ -46,7 +46,8 @@ MEMORY
     flash5 (rx) : org = 0x00000000, len = 0
     flash6 (rx) : org = 0x00000000, len = 0
     flash7 (rx) : org = 0x00000000, len = 0
-    ram0   (wx) : org = 0x24000000, len = 320k      /* AXI SRAM */
+    ram0   (wx) : org = 0x24000000, len = 312k      /* AXI SRAM */
+    ram_sd (wx) : org = 0x2404E000, len = 8k        /* AXI SRAM top, SDMMC1 */
     ram1   (wx) : org = 0x30000000, len = 32k       /* AHB SRAM1+SRAM2 */
     ram2   (wx) : org = 0x30000000, len = 16k       /* AHB SRAM1 */
     ram3   (wx) : org = 0x30004000, len = 16k       /* AHB SRAM2 */
@@ -109,13 +110,21 @@ INCLUDE rules_stacks.ld
 /*===========================================================================*/
 
 /* RAM region to be used for nocache segment.*/
-REGION_ALIAS("NOCACHE_RAM", ram3);
+REGION_ALIAS("ram_nocache", ram3);
 
 /* RAM region to be used for eth segment.*/
 REGION_ALIAS("ETH_RAM", ram3);
 
 SECTIONS
 {
+    /* SDMMC1 DMA buffers. Must precede .nocache to get __nocache_sd1_*.*/
+    .sdmmc (NOLOAD) : ALIGN(32)
+    {
+        *(.bss.__nocache_sd1_*)
+        *(.sdmmc)
+        *(.sdmmc.*)
+    } > ram_sd
+
     /* Special section for non cache-able areas.*/
     .nocache (NOLOAD) : ALIGN(4)
     {
@@ -125,7 +134,7 @@ SECTIONS
         *(.bss.__nocache_*)
         . = ALIGN(4);
         __nocache_end__ = .;
-    } > NOCACHE_RAM
+    } > ram_nocache
 
     /* Special section for Ethernet DMA non cache-able areas.*/
     .eth (NOLOAD) : ALIGN(4)
@@ -148,3 +157,16 @@ INCLUDE rules_data.ld
 /* Memory rules inclusion.*/
 INCLUDE rules_memory.ld
 
+
+__ram_nocache_base__    = ORIGIN(ram_nocache);
+__ram_nocache_size__    = LENGTH(ram_nocache);
+__ram_sd_base__         = ORIGIN(ram_sd);
+__ram_sd_size__         = LENGTH(ram_sd);
+
+/* MPU regions: power of two in size, aligned to it.*/
+ASSERT(LENGTH(ram_sd) == (1 << LOG2CEIL(LENGTH(ram_sd))) && ORIGIN(ram_sd) % LENGTH(ram_sd) == 0,
+       "ram_sd must be a power of two and aligned to it")
+ASSERT(LENGTH(ram4) == (1 << LOG2CEIL(LENGTH(ram4))) && ORIGIN(ram4) % LENGTH(ram4) == 0,
+       "ram4 must be a power of two and aligned to it")
+ASSERT(LENGTH(ram_nocache) == 16k && ORIGIN(ram_nocache) % LENGTH(ram_nocache) == 0,
+       "ram_nocache must be 16K and aligned to it")

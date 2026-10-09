@@ -54,8 +54,13 @@
  */
 #define STM32_NOCACHE_ENABLE                TRUE
 #define STM32_NOCACHE_MPU_REGION            MPU_REGION_6
-#define STM32_NOCACHE_RBAR                  0x30004000U
+#define STM32_NOCACHE_RBAR                  ((uint32_t)__ram_nocache_base__)
+/* Must equal LENGTH(ram_nocache).*/
 #define STM32_NOCACHE_RASR                  MPU_RASR_SIZE_16K
+
+#if !defined(_FROM_ASM_)
+extern char __ram_nocache_base__[];
+#endif
 
 /*
  * PWR system settings.
@@ -403,7 +408,7 @@
 /*
  * SDC driver system settings.
  */
-#define STM32_SDC_USE_SDMMC1                FALSE
+#define STM32_SDC_USE_SDMMC1                TRUE
 #define STM32_SDC_USE_SDMMC2                FALSE
 #define STM32_SDC_SDMMC_UNALIGNED_SUPPORT   TRUE
 #define STM32_SDC_SDMMC_WRITE_TIMEOUT       10000

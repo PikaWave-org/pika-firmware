@@ -20,6 +20,8 @@ design rules in CLAUDE.md instead of here.
 
 - [I2C DMA silently moves nothing](i2c-dma-silently-broken.md) — DMA needs D2 SRAM buffers *and* an MPU no-cache region, or it transfers zero bytes and reports success; I2C4 (BDMA) needs SRAM4 instead.
 - [Busy-waits starve every thread](chibios-busy-wait-starves-threads.md) — round-robin is off, so one unbounded spin stops the whole board and looks like a hard fault.
+- [SDMMC1 DMA reaches AXI SRAM only](sdmmc1-idma-axi-only.md) — the microSD buffers live in their own non-cacheable AXI window (MPU region 4), not `.nocache`, and the linker-order trick that moves ChibiOS's own SD buffers there.
+- [No USB cable, no log](usb-init-spins-without-cable.md) — tinyUSB's init spins on the unpowered ULPI PHY at HIGHPRIO and starves `main()` and the heartbeat; a zero-byte capture is this, not a crash.
 
 ## Working on the hardware
 

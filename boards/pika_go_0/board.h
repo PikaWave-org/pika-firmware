@@ -110,6 +110,12 @@
 #define LINE_USB_ULPI_D5            PAL_LINE(GPIOB, 12U)
 #define LINE_USB_ULPI_D6            PAL_LINE(GPIOB, 13U)
 #define LINE_USB_ULPI_D7            PAL_LINE(GPIOB, 5U)
+#define LINE_SD_CK                  PAL_LINE(GPIOC, 12U)
+#define LINE_SD_CMD                 PAL_LINE(GPIOD, 2U)
+#define LINE_SD_D0                  PAL_LINE(GPIOC, 8U)
+#define LINE_SD_D1                  PAL_LINE(GPIOC, 9U)
+#define LINE_SD_D2                  PAL_LINE(GPIOC, 10U)
+#define LINE_SD_D3                  PAL_LINE(GPIOC, 11U)
 
 /* Serial driver behind the debug UART pins above. */
 #define BOARD_DBG_SERIAL            SD3
@@ -294,6 +300,13 @@
  */
 #define BOARD_USB_ULPI_PINMODE      (PAL_MODE_ALTERNATE(10U) |               \
                                      PAL_STM32_OSPEED_HIGHEST)
+
+/* microSD on SDMMC1, 4 bit. No card detect, no external pull-ups. */
+#define BOARD_SD_CK_PINMODE         (PAL_MODE_ALTERNATE(12U) |               \
+                                     PAL_STM32_OSPEED_HIGHEST)
+#define BOARD_SD_PINMODE            (PAL_MODE_ALTERNATE(12U) |               \
+                                     PAL_STM32_OSPEED_HIGHEST |              \
+                                     PAL_STM32_PUPDR_PULLUP)
 
 /*===========================================================================*/
 /* External declarations.                                                    */

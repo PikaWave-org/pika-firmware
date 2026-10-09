@@ -20,16 +20,25 @@
 /* Driver local functions.                                                   */
 /*===========================================================================*/
 
+extern char __ram4_base__[], __ram4_size__[];
+extern char __ram_sd_base__[], __ram_sd_size__[];
+
+/* Makes a memory region non-cacheable. Size must be a power of two.*/
+static void mpu_nocache_region(uint32_t region, char *base, char *size) {
+    mpuConfigureRegion(region, (uint32_t) base,
+                       MPU_RASR_ATTR_AP_RW_RW | MPU_RASR_ATTR_NON_CACHEABLE | MPU_RASR_ATTR_S |
+                               MPU_RASR_SIZE(__builtin_ctz((uint32_t) size) - 1U) | MPU_RASR_ENABLE);
+}
+
 /*
  * D2 SRAM (0x30000000) has its own clock gates and comes out of reset with
  * them off, so the memory silently ignores accesses until they are enabled.
- * The I2C DMA buffers live there, so this has to happen before any of it is
- * touched. The .nocache section is NOLOAD, so startup never writes to it.
+ * The .nocache DMA buffers live there, so this has to happen before any of
+ * it is touched. The section is NOLOAD, so startup never writes to it.
  */
 static void stm32_d2_sram_init(void) { rccEnableAHB2(RCC_AHB2ENR_SRAM1EN | RCC_AHB2ENR_SRAM2EN, false); }
 
 static void stm32_gpio_init(void) {
-
     /* Enabling GPIO-related clocks, the mask comes from the
      registry header file.*/
     __rccResetAHB4(STM32_GPIO_EN_MASK);
@@ -125,6 +134,14 @@ static void stm32_gpio_init(void) {
     palSetLineMode(LINE_USB_ULPI_D6, BOARD_USB_ULPI_PINMODE);
     palSetLineMode(LINE_USB_ULPI_D7, BOARD_USB_ULPI_PINMODE);
 
+    /* microSD on SDMMC1.*/
+    palSetLineMode(LINE_SD_CK, BOARD_SD_CK_PINMODE);
+    palSetLineMode(LINE_SD_CMD, BOARD_SD_PINMODE);
+    palSetLineMode(LINE_SD_D0, BOARD_SD_PINMODE);
+    palSetLineMode(LINE_SD_D1, BOARD_SD_PINMODE);
+    palSetLineMode(LINE_SD_D2, BOARD_SD_PINMODE);
+    palSetLineMode(LINE_SD_D3, BOARD_SD_PINMODE);
+
     /* The HSE oscillator has to be running before stm32_clock_init().*/
     palSetLine(LINE_HSE_EN);
 }
@@ -137,13 +154,26 @@ static void stm32_gpio_init(void) {
 /* Driver exported functions.                                                */
 /*===========================================================================*/
 
+#if HAL_USE_SDC || defined(__DOXYGEN__)
+/* No card detect: always report a card.*/
+bool sdc_lld_is_card_inserted(SDCDriver *sdcp) {
+    (void) sdcp;
+    return true;
+}
+
+/* microSD has no write protect.*/
+bool sdc_lld_is_write_protected(SDCDriver *sdcp) {
+    (void) sdcp;
+    return false;
+}
+#endif
+
 /**
  * @brief   Early initialization code.
  * @details GPIO ports and system clocks are initialized before everything
  *          else.
  */
 void __early_init(void) {
-
     stm32_d2_sram_init();
     stm32_gpio_init();
     stm32_clock_init();
@@ -153,15 +183,8 @@ void __early_init(void) {
  * @brief   Board-specific initialization code.
  */
 void boardInit(void) {
-
-    /* The BQ25895 driver's buffers sit in SRAM4, the only memory I2C4's BDMA
-     reaches. ChibiOS's one nocache region already covers the D2 buffers, so
-     SRAM4 gets a second one here: halInit() has enabled the MPU by now, and
-     region 7 is reserved for the ChibiOS stack guard. Nothing has touched
-     SRAM4 yet, but the cache is cleaned anyway so the new attributes cannot
-     meet a stale line.*/
-    mpuConfigureRegion(MPU_REGION_5, 0x38000000U,
-                       MPU_RASR_ATTR_AP_RW_RW | MPU_RASR_ATTR_NON_CACHEABLE | MPU_RASR_ATTR_S | MPU_RASR_SIZE_16K |
-                               MPU_RASR_ENABLE);
+    /* Non-cacheable DMA memory: SRAM4 for the BDMA, ram_sd for SDMMC1.*/
+    mpu_nocache_region(MPU_REGION_5, __ram4_base__, __ram4_size__);
+    mpu_nocache_region(MPU_REGION_4, __ram_sd_base__, __ram_sd_size__);
     SCB_CleanInvalidateDCache();
 }

@@ -21,6 +21,7 @@
 #include <pika/log.h>
 #include <pika/power/BQ25895.h>
 #include <pika/radio/SX1262.h>
+#include <pika/storage/SDCard.h>
 #include <pika/ublox.h>
 #include <pika/usb/TinyUSBTask.h>
 
@@ -112,6 +113,8 @@ static pika::App app{app_cfg};
 
 static pika::usb::TinyUSBTask usb;
 
+static pika::storage::SDCard sd;
+
 int main() {
     halInit();
     chSysInit();
@@ -155,10 +158,17 @@ int main() {
 
     mac.start(HIGHPRIO);
 
+    /* Before USB: without a cable its init never returns.*/
+    if (sd.mount()) {
+        LOG("sd: mounted, %u MB, %u MB free", (unsigned) sd.capacity_mb(), (unsigned) sd.free_mb());
+    } else {
+        LOG("sd: not mounted, error %d", (int) sd.last_error());
+    }
+
     app.init();
     app.start(NORMALPRIO);
 
-    usb.start(HIGHPRIO);
+    // usb.start(HIGHPRIO);
 
     while (true) {
         chThdSleepMilliseconds(1000);
