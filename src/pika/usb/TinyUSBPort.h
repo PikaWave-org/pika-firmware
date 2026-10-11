@@ -32,4 +32,4 @@ public:
 /**
  * @}
  */
-} // namespace pika::drivers
+}// namespace pika::usb

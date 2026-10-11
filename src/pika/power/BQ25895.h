@@ -1,24 +1,22 @@
-/*
- * Driver for the TI BQ25895 single cell charger on I2C.
- *
- * The chip charges on its own: CE is strapped low on this board, so it charges
- * whenever VBUS is present whether or not the MCU ever talks to it. What the
- * driver adds is the charge settings, the status and fault registers, and the
- * chip's ADC - battery, system and VBUS voltage, charge current, and the TS
- * (thermistor) reading.
- *
- * Usage:
- *
- *   static const pika::power::BQ25895::Config chg_cfg = {
- *     &BOARD_CHG_I2C, BOARD_CHG_I2C_ADDR, LINE_CHG_INT,
- *     BOARD_CHG_ICHG_MA, BOARD_CHG_VREG_MV
- *   };
- *   static pika::power::BQ25895 charger{chg_cfg};
- *
- * @note  Like ST75160, the transfer buffers are file-static because their
- *        placement is what makes DMA work (see the .cpp), so one instance is
- *        the supported case, used from one thread.
- */
+// Driver for the TI BQ25895 single cell charger on I2C.
+//
+// The chip charges on its own: CE is strapped low on this board, so it charges
+// whenever VBUS is present whether or not the MCU ever talks to it. What the
+// driver adds is the charge settings, the status and fault registers, and the
+// chip's ADC - battery, system and VBUS voltage, charge current, and the TS
+// (thermistor) reading.
+//
+// Usage:
+//
+//   static const pika::power::BQ25895::Config chg_cfg = {
+//     &BOARD_CHG_I2C, BOARD_CHG_I2C_ADDR, LINE_CHG_INT,
+//     BOARD_CHG_ICHG_MA, BOARD_CHG_VREG_MV
+//   };
+//   static pika::power::BQ25895 charger{chg_cfg};
+//
+// @note  Like ST75160, the transfer buffers are file-static because their
+//        placement is what makes DMA work (see the .cpp), so one instance is
+//        the supported case, used from one thread.
 
 #pragma once
 
@@ -45,12 +43,12 @@ public:
         uint16_t charge_voltage_mv; /**< Charge voltage, 16mV steps from 3840.  */
     };
 
-    /* Fault bits in Status::faults, which is REG0C as read. */
+    // Fault bits in Status::faults, which is REG0C as read.
     static constexpr uint8_t fault_watchdog = 0x80U;
     static constexpr uint8_t fault_boost = 0x40U;
-    static constexpr uint8_t fault_charge_mask = 0x30U; /* 1 input, 2 thermal, 3 timer */
-    static constexpr uint8_t fault_battery = 0x08U;     /* BAT overvoltage            */
-    static constexpr uint8_t fault_ntc_mask = 0x07U;    /* 2 warm, 3 cool, 5 cold, 6 hot */
+    static constexpr uint8_t fault_charge_mask = 0x30U;// 1 input, 2 thermal, 3 timer
+    static constexpr uint8_t fault_battery = 0x08U;    // BAT overvoltage
+    static constexpr uint8_t fault_ntc_mask = 0x07U;   // 2 warm, 3 cool, 5 cold, 6 hot
 
     explicit BQ25895(const Config &cfg) : cfg_(cfg) {}
 
@@ -83,21 +81,19 @@ private:
 
     Config cfg_;
     uint32_t error_flags_ = 0U;
-    /* Signalled from the ~INT edge, which the chip pulses on any fault and on
-       every charge or input state change. Binary: pulses that land while an
-       update() is running collapse into one more update(), which then reads
-       the latest state anyway. */
+    // Signalled from the ~INT edge, which the chip pulses on any fault and on
+    // every charge or input state change. Binary: pulses that land while an
+    // update() is running collapse into one more update(), which then reads
+    // the latest state anyway.
     binary_semaphore_t int_sem_;
 
     BatteryStatus status_{};
 
-    /**
-     * @brief   Reads the status and fault registers.
-     * @note    The fault register latches: the first read after a fault
-     *          reports it and clears it, a second read reports the current
-     *          state. A fault therefore shows up exactly once here.
-     */
+    // Reads the status and fault registers.
+    // @note    The fault register latches: the first read after a fault
+    //          reports it and clears it, a second read reports the current
+    //          state. A fault therefore shows up exactly once here.
     bool update();
 };
 
-} /* namespace pika::power */
+}// namespace pika::power

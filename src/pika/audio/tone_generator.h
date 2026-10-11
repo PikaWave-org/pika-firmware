@@ -1,8 +1,6 @@
-/*
- * A sine of any frequency, from a phase accumulator, so no per-frequency
- * table is needed. Samples are signed full scale: the converter's width and
- * the volume belong to the sink.
- */
+// A sine of any frequency, from a phase accumulator, so no per-frequency
+// table is needed. Samples are signed full scale: the converter's width and
+// the volume belong to the sink.
 
 #pragma once
 
@@ -44,7 +42,7 @@ public:
         return n;
     }
 
-    bool is_active_() { return active_; }
+    bool is_active() { return active_; }
 
 private:
     bool active_ = false;

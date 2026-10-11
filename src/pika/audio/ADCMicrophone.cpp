@@ -31,14 +31,19 @@ bool ADCMicrophone::init() {
         return false;
     }
 
+    if (not cfg_.clock->init()) {
+        adcStop(cfg_.adc);
+        return false;
+    }
+
     ready_ = true;
     return true;
 }
 
-void ADCMicrophone::preamp(bool on) { palWriteLine(cfg_.shutdown, !on); }
+void ADCMicrophone::preamp(bool on) { palWriteLine(cfg_.shutdown, not on); }
 
 bool ADCMicrophone::start_capture() {
-    if (!ready_) {
+    if (not ready_) {
         LOG("error: microphone is not initialized");
         return false;
     }
@@ -48,16 +53,16 @@ bool ADCMicrophone::start_capture() {
         return false;
     }
 
-    /* An early out, not the interlock: it saves powering the preamp up for
-     20ms only to find the speaker talking. The claim below is what actually
-     decides, and it is checked under the system lock. */
+    // An early out, not the interlock: it saves powering the preamp up for
+    // 20ms only to find the speaker talking. The claim below is what actually
+    // decides, and it is checked under the system lock.
     if (cfg_.clock->is_busy()) {
         LOG("error: sample clock is busy");
         return false;
     }
 
-    /* The preamp comes up first and its output is given time to reach the
-       bias point, so the ramp is not recorded as a thump. */
+    // The preamp comes up first and its output is given time to reach the
+    // bias point, so the ramp is not recorded as a thump.
     preamp(true);
     chThdSleepMilliseconds(cfg_.settle_ms);
 
@@ -71,9 +76,9 @@ bool ADCMicrophone::start_capture() {
         return false;
     }
 
-    /* The clock goes last, as on the speaker: the converter is armed and
-     waiting before the first trigger can arrive. */
-    if (!cfg_.clock->start(this)) {
+    // The clock goes last, as on the speaker: the converter is armed and
+    // waiting before the first trigger can arrive.
+    if (not cfg_.clock->start(this)) {
         LOG("error: sample clock is busy");
         adcStopConversion(cfg_.adc);
         running_ = false;
@@ -85,7 +90,7 @@ bool ADCMicrophone::start_capture() {
 }
 
 void ADCMicrophone::stop_capture() {
-    if (!capturing()) {
+    if (not capturing()) {
         return;
     }
 
@@ -96,10 +101,8 @@ void ADCMicrophone::stop_capture() {
     preamp(false);
 }
 
-/*
- * The I-class form, for the error callback: it runs in the DMA interrupt,
- * where the ordinary calls would take the system lock again.
- */
+// The I-class form, for the error callback: it runs in the DMA interrupt,
+// where the ordinary calls would take the system lock again.
 void ADCMicrophone::stop_capture_i() {
     cfg_.clock->stop_i(this);
 
@@ -110,23 +113,19 @@ void ADCMicrophone::stop_capture_i() {
     running_ = false;
 }
 
-/*
- * Called from the DMA interrupt at the halfway point and at the end of the
- * buffer; adcIsBufferComplete() tells which, and so which half has just been
- * filled.
- */
+// Called from the DMA interrupt at the halfway point and at the end of the
+// buffer; adcIsBufferComplete() tells which, and so which half has just been
+// filled.
 void ADCMicrophone::fill_cb_static(ADCDriver *adcp) {
-    /* Stopping the conversion disables the DMA stream and clears its pending
-       flags under the lock, so a callback with no consumer is a driver bug. */
+    // Stopping the conversion disables the DMA stream and clears its pending
+    // flags under the lock, so a callback with no consumer is a driver bug.
     chDbgAssert(instance_ != nullptr, "mic: instance_ == nullptr");
 
     adcsample_t *half = adcIsBufferComplete(adcp) ? &mic_buffer[mic_buffer_half_len] : &mic_buffer[0];
     instance_->fill_cb({half, mic_buffer_half_len});
 }
 
-/*
- * Raw codes to signed full scale, in place.
- */
+// Raw codes to signed full scale, in place.
 void ADCMicrophone::fill_cb(std::span<adcsample_t> buf) {
     std::span<int16_t> out{reinterpret_cast<int16_t *>(buf.data()), buf.size()};
     for (size_t i = 0; i < buf.size(); i++) {

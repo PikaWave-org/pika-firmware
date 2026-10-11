@@ -7,19 +7,17 @@ namespace pika::audio {
 
 namespace {
 
-/*
- * The prototype low pass, committed rather than generated at build time: a
- * table that cannot silently change between builds is worth something in a
- * signal path whose failure mode is inaudible.
- *
- *   scipy.signal.firwin(256, 3700, window=('kaiser', 6.6), fs=32000)
- *
- * 3700Hz centres the transition on the 4kHz fold point, above MELPe's 3.4kHz
- * band; beta 6.6 gives the 70dB of stopband that puts the worst alias at the
- * 12 bit ADC's own floor. Measured: flat to 3.4kHz, -69dB at 4kHz, -107dB at
- * the backlight's 10kHz. The taps sum to 1, so the decimator needs no scaling
- * and the interpolator multiplies by four, each phase carrying a quarter.
- */
+// The prototype low pass, committed rather than generated at build time: a
+// table that cannot silently change between builds is worth something in a
+// signal path whose failure mode is inaudible.
+//
+//   scipy.signal.firwin(256, 3700, window=('kaiser', 6.6), fs=32000)
+//
+// 3700Hz centres the transition on the 4kHz fold point, above MELPe's 3.4kHz
+// band; beta 6.6 gives the 70dB of stopband that puts the worst alias at the
+// 12 bit ADC's own floor. Measured: flat to 3.4kHz, -69dB at 4kHz, -107dB at
+// the backlight's 10kHz. The taps sum to 1, so the decimator needs no scaling
+// and the interpolator multiplies by four, each phase carrying a quarter.
 constexpr float fir_h[fir_taps] = {
         -0.000021397f, -0.000018154f, -0.000002046f, +0.000021115f, +0.000039000f, +0.000038821f, +0.000015366f,
         -0.000023665f, -0.000059044f, -0.000068888f, -0.000041242f, +0.000016467f, +0.000077511f, +0.000107456f,
@@ -69,11 +67,11 @@ void Decimator4::reset() { std::fill(std::begin(work_), std::end(work_), 0.0f); 
 size_t Decimator4::process(std::span<const int16_t> in, std::span<int16_t> out) {
     const size_t n = in.size();
 
-    if (n > max_in || (n % 4U) != 0U || out.size() < n / 4U) {
+    if (n > max_in or (n % 4U) != 0U or out.size() < n / 4U) {
         return 0U;
     }
 
-    /* work_ is [ the previous fir_taps-1 samples | this block ]. */
+    // work_ is [ the previous fir_taps-1 samples | this block ].
     constexpr size_t hist = fir_taps - 1U;
 
     for (size_t i = 0; i < n; i++) { work_[hist + i] = (float) in[i]; }
@@ -88,7 +86,7 @@ size_t Decimator4::process(std::span<const int16_t> in, std::span<int16_t> out) 
         out[j] = to_sample(acc);
     }
 
-    /* The window start advances by 4 per output, so by exactly n per block. */
+    // The window start advances by 4 per output, so by exactly n per block.
     std::copy(&work_[n], &work_[n + hist], &work_[0]);
     return outs;
 }
@@ -98,7 +96,7 @@ void Interpolator4::reset() { std::fill(std::begin(work_), std::end(work_), 0.0f
 size_t Interpolator4::process(std::span<const int16_t> in, std::span<int16_t> out) {
     const size_t n = in.size();
 
-    if (n > max_in || out.size() < 4U * n) {
+    if (n > max_in or out.size() < 4U * n) {
         return 0U;
     }
 
@@ -107,7 +105,7 @@ size_t Interpolator4::process(std::span<const int16_t> in, std::span<int16_t> ou
     for (size_t i = 0; i < n; i++) { work_[hist + i] = (float) in[i]; }
 
     for (size_t i = 0; i < n; i++) {
-        const float *w = &work_[i]; /* w[hist] is the newest sample. */
+        const float *w = &work_[i];// w[hist] is the newest sample.
 
         for (size_t p = 0; p < 4U; p++) {
             float acc = 0.0f;

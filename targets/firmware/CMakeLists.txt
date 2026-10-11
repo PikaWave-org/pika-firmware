@@ -12,18 +12,17 @@ pika_add_firmware(firmware
                 ${PIKA_RADIO_SOURCES}
                 ${PIKA_STORAGE_SOURCES}
                 ${MELPE_SOURCES}
-                ${TINYUSB_SOURCES}
-                ${FATFS_SOURCES})
+                ${TINYUSB_SOURCES})
 
-target_include_directories(firmware.elf SYSTEM PRIVATE ${TINYUSB_INCLUDE_DIRS} ${FATFS_INCLUDE_DIRS})
+target_include_directories(firmware.elf SYSTEM PRIVATE ${TINYUSB_INCLUDE_DIRS})
+
+pika_add_fatfs(firmware.elf)
 
 set_source_files_properties(${MELPE_SOURCES} PROPERTIES
         COMPILE_OPTIONS "${MELPE_COMPILE_OPTIONS}"
         INCLUDE_DIRECTORIES "${MELPE_ROOT}")
 set_source_files_properties(${TINYUSB_SOURCES} PROPERTIES
         COMPILE_OPTIONS "${TINYUSB_COMPILE_OPTIONS}")
-set_source_files_properties(${FATFS_SOURCES} PROPERTIES
-        COMPILE_OPTIONS "${FATFS_COMPILE_OPTIONS}")
 
 target_compile_definitions(firmware.elf PRIVATE CHPRINTF_USE_FLOAT=TRUE)
 

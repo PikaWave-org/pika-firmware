@@ -89,7 +89,7 @@ struct msg_rx_mon_ver_s {
 #pragma pack(pop)
 
 Ublox::Ublox(const Config &cfg) : _cfg(cfg) {
-    /* Runs before halInit(), so nothing here may touch the hardware. */
+    // Runs before halInit(), so nothing here may touch the hardware.
     chMtxObjectInit(&_lock);
 }
 
@@ -140,11 +140,9 @@ bool Ublox::mon_hw(msg_rx_mon_hw_s &msg, uint32_t *age_ms) const {
     return got;
 }
 
-/*
- * sdStart() keeps the pointer rather than copying the config, so it has to
- * outlive the call. sdStop() empties both queues, which is what is wanted on
- * a rate change: bytes captured at the old speed only ever decode as noise.
- */
+// sdStart() keeps the pointer rather than copying the config, so it has to
+// outlive the call. sdStop() empties both queues, which is what is wanted on
+// a rate change: bytes captured at the old speed only ever decode as noise.
 void Ublox::set_baudrate(uint32_t baudrate) {
     static SerialConfig serial_cfg;
 
@@ -178,9 +176,9 @@ Ublox::HWProtocolVersion Ublox::probe() {
         LOG("gnss: MON_VER.swVersion: %s", mon_ver->swVersion);
         LOG("gnss: MON_VER.hwVersion: %s", mon_ver->hwVersion);
 
-        if (!strncmp("00080000", mon_ver->hwVersion, sizeof(mon_ver->hwVersion))) {
+        if (not strncmp("00080000", mon_ver->hwVersion, sizeof(mon_ver->hwVersion))) {
             version.hwVersion = HWVersion::UBLOX8;
-        } else if (!strncmp("00190000", mon_ver->hwVersion, sizeof(mon_ver->hwVersion))) {
+        } else if (not strncmp("00190000", mon_ver->hwVersion, sizeof(mon_ver->hwVersion))) {
             version.hwVersion = HWVersion::UBLOX9;
         } else {
             version.hwVersion = HWVersion::UNKNOWN;
@@ -192,7 +190,7 @@ Ublox::HWProtocolVersion Ublox::probe() {
         for (size_t idx = 40; idx < msg->length; idx += ext_size) {
             char *ext = reinterpret_cast<char *>(msg->payload()) + idx;
 
-            if (!strncmp("PROTVER", ext, 7)) {
+            if (not strncmp("PROTVER", ext, 7)) {
                 version.protocol = strtol(ext + 8, nullptr, 10);
             }
         }
@@ -213,7 +211,7 @@ bool Ublox::read_message(Message *&msg) {
             msg = reinterpret_cast<Message *>(buf.data());
 
             // Check sync bytes
-            if (!(msg->sync1 == UBX_SYNC1 && msg->sync2 == UBX_SYNC2)) {
+            if (not(msg->sync1 == UBX_SYNC1 and msg->sync2 == UBX_SYNC2)) {
                 if (_sync) {
                     _sync = false;
                     _errors++;
@@ -241,7 +239,7 @@ bool Ublox::read_message(Message *&msg) {
             Checksum checksum_calc = calculate_checksum(buf.subspan(2, msg->length + sizeof(Message) - 2));
             Checksum *checksum = reinterpret_cast<Checksum *>(&buf[msg->length + sizeof(Message)]);
 
-            if (checksum_calc.ck_a != checksum->ck_a || checksum_calc.ck_b != checksum->ck_b) {
+            if (checksum_calc.ck_a != checksum->ck_a or checksum_calc.ck_b != checksum->ck_b) {
                 LOG("gnss: checksum error: %02x != %02x || %02x != %02x", checksum_calc.ck_a, checksum->ck_a,
                     checksum_calc.ck_b, checksum->ck_b);
                 _errors++;
@@ -290,8 +288,8 @@ bool Ublox::wait_for_message(sysinterval_t timeout, Message *&msg, MessageClass 
 
     for (;;) {
         if (read_message(msg)) {
-            if (msg->msg_class == static_cast<uint8_t>(msg_class) &&
-                (msg_id == MessageID::ANY || msg->msg_id == static_cast<uint8_t>(msg_id))) {
+            if (msg->msg_class == static_cast<uint8_t>(msg_class) and
+                (msg_id == MessageID::ANY or msg->msg_id == static_cast<uint8_t>(msg_id))) {
                 return true;// Specified message received
             }
         }
@@ -364,7 +362,7 @@ void Ublox::configure() {
     // Try different baudrates
     bool found = false;
 
-    for (int round = 0; round < 3 && !found; ++round) {
+    for (int round = 0; round < 3 and not found; ++round) {
         for (uint32_t baudrate: _baudrates_list) {
             LOG("gnss: try baudrate: %u", (unsigned) baudrate);
             set_baudrate(baudrate);
@@ -372,7 +370,7 @@ void Ublox::configure() {
             flush_buffers();
             _version = probe();
 
-            if (_version.found() && _version.hwVersion != HWVersion::UNKNOWN) {
+            if (_version.found() and _version.hwVersion != HWVersion::UNKNOWN) {
                 found = true;
 
                 // Set baudrate/protocols for the port
@@ -385,8 +383,8 @@ void Ublox::configure() {
                 cfg_prt.inProtoMask = (1 << 0); // UBX in
                 cfg_prt.outProtoMask = (1 << 0);// UBX out
 
-                /* Not acked: the receiver changes rate as soon as it has
-           parsed this, so any ACK would arrive at the new speed. */
+                // Not acked: the receiver changes rate as soon as it has
+                // parsed this, so any ACK would arrive at the new speed.
                 send_message(MessageClass::CFG, MessageID::CFG_PRT, &cfg_prt, sizeof(cfg_prt));
 
                 chThdSleepMilliseconds(50);
@@ -404,7 +402,7 @@ void Ublox::configure() {
         }
     }
 
-    if (!_version.found()) {
+    if (not _version.found()) {
         LOG("gnss: ERROR: configuration failed, device not found");
     } else {
         // Configure device
@@ -424,12 +422,10 @@ void Ublox::configure() {
 
         send_cfg_msg(MessageClass::NAV, MessageID::NAV_PVT, 1, true);
 
-        /*
-     * Front-end health, at the same rate as the solution: the rate is in
-     * navigation epochs, so 1 here is one MON-HW per NAV-PVT. Cheap at 60
-     * bytes, and it is the only way to tell a receiver with no sky view from
-     * one whose antenna is open or being jammed.
-     */
+        // Front-end health, at the same rate as the solution: the rate is in
+        // navigation epochs, so 1 here is one MON-HW per NAV-PVT. Cheap at 60
+        // bytes, and it is the only way to tell a receiver with no sky view from
+        // one whose antenna is open or being jammed.
         send_cfg_msg(MessageClass::MON, MessageID::MON_HW, 1, true);
 
         LOG("gnss: configuration done");
@@ -508,7 +504,7 @@ void Ublox::handle_message(Message *msg) {
             break;
     }
 
-    if (!handled) {
+    if (not handled) {
         LOG("gnss: unsupported message: 0x%02x 0x%02x", msg->msg_class, msg->msg_id);
         send_cfg_msg(msg_class, msg_id, 0, false);
     }
@@ -541,4 +537,4 @@ Ublox::Checksum Ublox::calculate_checksum(std::span<const uint8_t> data) {
     return checksum;
 }
 
-} /* namespace pika::gnss */
+}// namespace pika::gnss

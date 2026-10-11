@@ -205,9 +205,7 @@ private:
         return *new_peer;
     }
 
-    /**
-     * Get current or next listen window
-     */
+    // Get current or next listen window
     std::pair<Time, Time> get_listen_window(const ListenWindow &win, const Time &t) {
         int64_t n = t / win.interval;
         Time s = n * win.interval;

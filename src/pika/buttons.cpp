@@ -25,7 +25,7 @@ Buttons::Buttons(const Config &cfg) : cfg_(cfg) {
     }
 }
 
-/* The resting state is not sampled; every button is assumed up. */
+// The resting state is not sampled; every button is assumed up.
 void Buttons::init() {
     chDbgAssert(instance_ == nullptr, "buttons: already initialised");
 
@@ -38,12 +38,12 @@ void Buttons::init() {
             any_polled = true;
             continue;
         }
-        /* The callback has to be in place before the channel can fire. */
+        // The callback has to be in place before the channel can fire.
         palSetLineCallback(cfg_.lines[i].line, edge_cb, &state_[i]);
         palEnableLineEvent(cfg_.lines[i].line, PAL_EVENT_MODE_BOTH_EDGES);
     }
 
-    /* No timer once every line has an EXTI channel of its own. */
+    // No timer once every line has an EXTI channel of its own.
     if (any_polled) {
         chSysLock();
         chVTSetContinuousI(&poll_vt_, POLL_PERIOD, poll_cb, this);
@@ -72,9 +72,7 @@ void Buttons::update_i(State &s) {
     s.changed = chVTGetSystemTimeX();
     s.down = down;
 
-    if (down) {
-        chEvtBroadcastFlagsI(&events_, flag(s.button));
-    }
+    chEvtBroadcastFlagsI(&events_, down ? press_flag(s.button) : release_flag(s.button));
 }
 
 void Buttons::poll_i() {
@@ -85,7 +83,7 @@ void Buttons::poll_i() {
     }
 }
 
-/* Both entry points arrive with the kernel unlocked. */
+// Both entry points arrive with the kernel unlocked.
 void Buttons::edge_cb(void *arg) {
     chSysLockFromISR();
     instance_->update_i(*(State *) arg);
@@ -100,4 +98,4 @@ void Buttons::poll_cb(virtual_timer_t *vtp, void *arg) {
     chSysUnlockFromISR();
 }
 
-} /* namespace pika::input */
+}// namespace pika::input

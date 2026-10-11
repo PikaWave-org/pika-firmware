@@ -16,7 +16,7 @@ protected:
         LOG("tinyUSB init");
         tusb_init(BOARD_TUD_RHPORT, &init);
 
-        while (!shouldTerminate()) {
+        while (not shouldTerminate()) {
             // tinyusb device task
             tud_task();
 

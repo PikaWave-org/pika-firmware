@@ -74,10 +74,10 @@ private:
     ioline_t _gpio_rx;
 
     binary_semaphore_t _sem_dio1;
-    /* The payload buffer, in AHB SRAM2 through the linker's .nocache section:
-       SPI transfers go out over DMA, and the D-cache is on, so a plain .bss
-       buffer would have the CPU and the controller looking at different
-       bytes. Static because the section is shared and there is one radio. */
+    // The payload buffer, in AHB SRAM2 through the linker's .nocache section:
+    // SPI transfers go out over DMA, and the D-cache is on, so a plain .bss
+    // buffer would have the CPU and the controller looking at different
+    // bytes. Static because the section is shared and there is one radio.
     static std::array<uint8_t, FIFO_SIZE + 3> _spi_buf;
     size_t _spi_buf_size = 0;
     size_t _payload_len = 0;
@@ -117,9 +117,9 @@ private:
 
     void get_rssi_inst();
 
-    /* The codes are not in bandwidth order and the narrow ones are 32 MHz
-       divided down, hence the odd values - same table as Semtech's
-       sx126x_get_lora_bw_in_hz(). */
+    // The codes are not in bandwidth order and the narrow ones are 32 MHz
+    // divided down, hence the odd values - same table as Semtech's
+    // sx126x_get_lora_bw_in_hz().
     uint32_t get_bw_hz() const {
         switch (_bw) {
             case 0:

@@ -1,18 +1,16 @@
-/*
- * FatFS disk I/O on SDCD1. Transfers go through a bounce buffer the SDMMC1 DMA
- * can reach, so callers may pass any buffer.
- */
+// FatFS disk I/O on SDCD1. Transfers go through a bounce buffer the SDMMC1 DMA
+// can reach, so callers may pass any buffer.
 
 #include <string.h>
 
 #include "hal.h"
 
-/* Must precede diskio.h. */
+// Must precede diskio.h.
 #include "ff.h"
 
 #include "diskio.h"
 
-/* Sectors per transfer. */
+// Sectors per transfer.
 #define BOUNCE_SECTORS 4U
 
 static uint8_t bounce[BOUNCE_SECTORS * MMCSD_BLOCK_SIZE] __attribute__((section(".sdmmc"), aligned(32)));
@@ -23,7 +21,7 @@ DSTATUS disk_status(BYTE pdrv) {
     return 0;
 }
 
-/* The card is connected before f_mount(). */
+// The card is connected before f_mount().
 DSTATUS disk_initialize(BYTE pdrv) { return disk_status(pdrv); }
 
 DRESULT disk_read(BYTE pdrv, BYTE *buff, LBA_t sector, UINT count) {
@@ -66,7 +64,7 @@ DRESULT disk_ioctl(BYTE pdrv, BYTE cmd, void *buff) {
             *(LBA_t *) buff = mmcsdGetCardCapacity(&SDCD1);
             return RES_OK;
         case GET_BLOCK_SIZE:
-            /* Unknown. */
+            // Unknown.
             *(DWORD *) buff = 1U;
             return RES_OK;
         default:

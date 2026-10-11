@@ -1,26 +1,24 @@
-/*
- * Drawing primitives over a framebuffer: pixels, blocks, lines, images and 8x8
- * text, top-left origin.
- *
- * Canvas knows pixels and nothing else. How they are stored, and what has to
- * be sent where, belongs to the framebuffer type FB, which the display driver
- * provides; all Canvas asks of it is
- *
- *   FB::width, FB::height          the panel in pixels
- *   fb.set_pixel<ON>(x, y)         one pixel, always on the panel
- *   fb.mark(x, y, w, h)            a region drawn on, clipped, never empty
- *
- * A template rather than a virtual interface: the per-pixel call inlines into
- * the loops, which is where all the time goes.
- *
- * Draw everything, then flush the driver once.
- *
- * Usage:
- *
- *   pika::gfx::Canvas<pika::lcd::ST75160::Framebuffer> canvas{lcd.framebuffer()};
- *   canvas.text(0, 0, "hello");
- *   lcd.flush();
- */
+// Drawing primitives over a framebuffer: pixels, blocks, lines, images and 8x8
+// text, top-left origin.
+//
+// Canvas knows pixels and nothing else. How they are stored, and what has to
+// be sent where, belongs to the framebuffer type FB, which the display driver
+// provides; all Canvas asks of it is
+//
+//   FB::width, FB::height          the panel in pixels
+//   fb.set_pixel<ON>(x, y)         one pixel, always on the panel
+//   fb.mark(x, y, w, h)            a region drawn on, clipped, never empty
+//
+// A template rather than a virtual interface: the per-pixel call inlines into
+// the loops, which is where all the time goes.
+//
+// Draw everything, then flush the driver once.
+//
+// Usage:
+//
+//   pika::gfx::Canvas<pika::lcd::ST75160::Framebuffer> canvas{lcd.framebuffer()};
+//   canvas.text(0, 0, "hello");
+//   lcd.flush();
 
 #pragma once
 
@@ -48,17 +46,15 @@ public:
         }
     }
 
-    /*
-     * Every primitive takes on/off as a template parameter: each caller knows
-     * at compile time whether it sets or clears, so the choice is made once
-     * there and the pixel loops carry only the one mask operation. Blocks are
-     * clipped to the panel once, before the loops.
-     */
+    // Every primitive takes on/off as a template parameter: each caller knows
+    // at compile time whether it sets or clears, so the choice is made once
+    // there and the pixel loops carry only the one mask operation. Blocks are
+    // clipped to the panel once, before the loops.
 
     /** @brief  Sets or clears one pixel, out of range coordinates are ignored. */
     template<bool ON>
     void pixel(int x, int y) {
-        if ((x < 0) || (x >= width) || (y < 0) || (y >= height)) {
+        if ((x < 0) or (x >= width) or (y < 0) or (y >= height)) {
             return;
         }
         fb_.template set_pixel<ON>(x, y);
@@ -82,7 +78,7 @@ public:
     /** @brief  Draws a 1 pixel wide rectangle outline. */
     template<bool ON>
     void frame(int x, int y, int w, int h) {
-        if ((w <= 0) || (h <= 0)) {
+        if ((w <= 0) or (h <= 0)) {
             return;
         }
 
@@ -93,18 +89,18 @@ public:
         const int bottom = y + h - 1;
         const int right = x + w - 1;
 
-        /* Each edge only if it is on the panel; the corners are drawn twice,
-           which is harmless. */
-        if ((y >= 0) && (y < height)) {
+        // Each edge only if it is on the panel; the corners are drawn twice,
+        // which is harmless.
+        if ((y >= 0) and (y < height)) {
             for (int i = x0; i < x1; i++) { fb_.template set_pixel<ON>(i, y); }
         }
-        if ((bottom >= 0) && (bottom < height)) {
+        if ((bottom >= 0) and (bottom < height)) {
             for (int i = x0; i < x1; i++) { fb_.template set_pixel<ON>(i, bottom); }
         }
-        if ((x >= 0) && (x < width)) {
+        if ((x >= 0) and (x < width)) {
             for (int j = y0; j < y1; j++) { fb_.template set_pixel<ON>(x, j); }
         }
-        if ((right >= 0) && (right < width)) {
+        if ((right >= 0) and (right < width)) {
             for (int j = y0; j < y1; j++) { fb_.template set_pixel<ON>(right, j); }
         }
         mark(x, y, w, h);
@@ -159,12 +155,12 @@ public:
         const int left = x;
 
         for (; *s != '\0'; s++, x += 8) {
-            if (((x + 8) <= 0) || (x >= width)) {
-                continue; /* glyph entirely off the panel, x still advances */
+            if (((x + 8) <= 0) or (x >= width)) {
+                continue;// glyph entirely off the panel, x still advances
             }
 
             char c = *s;
-            if ((c < font8x8_first) || (c > font8x8_last)) {
+            if ((c < font8x8_first) or (c > font8x8_last)) {
                 c = '?';
             }
 
@@ -186,13 +182,13 @@ public:
     }
 
 private:
-    /** @brief  Clips a region to the panel and reports it, if anything is left. */
+    // Clips a region to the panel and reports it, if anything is left.
     void mark(int x, int y, int w, int h) {
         const int x0 = (x < 0) ? 0 : x;
         const int x1 = ((x + w) > width) ? width : (x + w);
         const int y0 = (y < 0) ? 0 : y;
         const int y1 = ((y + h) > height) ? height : (y + h);
-        if ((x0 < x1) && (y0 < y1)) {
+        if ((x0 < x1) and (y0 < y1)) {
             fb_.mark(x0, y0, x1 - x0, y1 - y0);
         }
     }
@@ -200,4 +196,4 @@ private:
     FB &fb_;
 };
 
-} /* namespace pika::gfx */
+}// namespace pika::gfx

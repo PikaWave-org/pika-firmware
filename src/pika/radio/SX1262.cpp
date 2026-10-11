@@ -107,7 +107,7 @@ void SX1262::tx(std::span<const uint8_t> data) {
     send_command_n(CMD_SET_TX, 3);// TX
 
     // Wait for TxDone interrupt
-    if (!chBSemWaitTimeout(&_sem_dio1, TIME_S2I(1))) {
+    if (not chBSemWaitTimeout(&_sem_dio1, TIME_S2I(1))) {
         // Switch to Standby
         send_command(CMD_SET_STANDBY, 0);// STDBY_RC
     }
@@ -167,14 +167,12 @@ std::span<const uint8_t> SX1262::rx(systime_t &timestamp, systime_t end_time) {
     return res;
 }
 
-/*
- * Every transfer below assembles its frame in _spi_buf rather than in a local
- * array, because SPI on this MCU is DMA only and DMA cannot read the caller's
- * stack: thread stacks are in DTCM, which no DMA controller here can reach at
- * all - the transfer errors out and ChibiOS halts the system with "DMA
- * failure". _spi_buf is in .nocache (AHB SRAM2), which DMA reaches and the
- * MPU keeps out of the D-cache.
- */
+// Every transfer below assembles its frame in _spi_buf rather than in a local
+// array, because SPI on this MCU is DMA only and DMA cannot read the caller's
+// stack: thread stacks are in DTCM, which no DMA controller here can reach at
+// all - the transfer errors out and ChibiOS halts the system with "DMA
+// failure". _spi_buf is in .nocache (AHB SRAM2), which DMA reaches and the
+// MPU keeps out of the D-cache.
 void SX1262::write_reg(uint16_t reg, uint8_t value) {
     wait_busy();
     _spi_buf[0] = CMD_WRITE_REGISTER;

@@ -123,15 +123,15 @@ static_assert(sizeof(pika::version::USB_SERIAL_NUMBER) == 13, "must equal 12 + '
 
 // array of pointer to string descriptors
 char const *string_desc_arr[] = {
-        (const char[]){0x09, 0x04},           // 0: is supported language is English (0x0409)
+        (const char[]){0x09, 0x04},      // 0: is supported language is English (0x0409)
         pika::version::USB_VENDOR_STR,   // 1: Manufacturer
         pika::version::USB_PRODUCT_STR,  // 2: Product
         pika::version::USB_SERIAL_NUMBER,// 3: Serials, should use chip ID
 #if CDC_ENABLED
-        "Serial",                             // 4: CDC Interface
+        "Serial",// 4: CDC Interface
 #endif
 #if MSC_ENABLED
-        "Storage",                            // 5: MSC Interface
+        "Storage",// 5: MSC Interface
 #endif
 };
 
@@ -151,7 +151,7 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
         // Note: the 0xEE index string is a Microsoft OS 1.0 Descriptors.
         // https://docs.microsoft.com/en-us/windows-hardware/drivers/usbcon/microsoft-defined-usb-descriptors
 
-        if (!(index < sizeof(string_desc_arr) / sizeof(string_desc_arr[0]))) return NULL;
+        if (not(index < sizeof(string_desc_arr) / sizeof(string_desc_arr[0]))) return NULL;
 
         const char *str = string_desc_arr[index];
 

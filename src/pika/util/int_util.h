@@ -36,4 +36,4 @@ constexpr T from_little_endian(T v) {
     return to_little_endian(v);
 }
 
-} // namespace pika
+}// namespace pika::util

@@ -222,8 +222,8 @@ private:
 
     Config _cfg;
 
-    /* The arrival times are guarded with their messages, so a caller always
-       gets an age that belongs to the copy it was handed. */
+    // The arrival times are guarded with their messages, so a caller always
+    // gets an age that belongs to the copy it was handed.
     mutable mutex_t _lock;///< Guards _nav_pvt and _mon_hw against the getters
     msg_rx_nav_pvt_s _nav_pvt = {};
     systime_t _nav_pvt_time = 0;
@@ -234,11 +234,9 @@ private:
 
     HWProtocolVersion _version;
 
-    /*
-     * Receive buffer and the window of it still to be parsed. Messages are
-     * cast in place out of this, which is why the structs above are packed:
-     * a frame can start at any offset, so nothing may assume alignment.
-     */
+    // Receive buffer and the window of it still to be parsed. Messages are
+    // cast in place out of this, which is why the structs above are packed:
+    // a frame can start at any offset, so nothing may assume alignment.
     uint8_t _buffer[BUFFER_SIZE] = {};
     size_t _fill = 0;///< Bytes held in _buffer
     size_t _pos = 0; ///< Parse cursor into _buffer
@@ -259,13 +257,11 @@ private:
     HWProtocolVersion probe();
 
     /// Read message.
-    /**
-     * Read one message from the receiver's serial port. Returns immediately
-     * if a complete message is already buffered, otherwise waits up to
-     * RECV_TIMEOUT for more data.
-     *
-     * @return true if a message was read, false if not enough data collected.
-     */
+    // Read one message from the receiver's serial port. Returns immediately
+    // if a complete message is already buffered, otherwise waits up to
+    // RECV_TIMEOUT for more data.
+    //
+    // @return true if a message was read, false if not enough data collected.
     bool read_message(Message *&msg);
 
     bool wait_for_message(sysinterval_t timeout, Message *&msg, MessageClass msg_class, MessageID msg_id);
@@ -286,4 +282,4 @@ private:
     static Checksum calculate_checksum(std::span<const uint8_t> data);
 };
 
-} /* namespace pika::gnss */
+}// namespace pika::gnss

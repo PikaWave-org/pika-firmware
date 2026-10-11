@@ -1,32 +1,30 @@
-/*
- * Driver for ST75160i LCD display controller on I2C.
- *
- * The panel's wiring - its I2C driver, bus address, reset and the two bus pins
- * - is passed in as a Config at construction, so the driver itself does not
- * depend on any board header.
- *
- * The driver does not draw. It owns the framebuffer, in the panel's own
- * memory layout, and hands it out as a Framebuffer that a gfx::Canvas draws
- * pixels into; flush() sends the DDRAM pages those pixels landed on, full
- * width, in one I2C transaction. A whole frame is ~47ms at 400kHz, a line of
- * text ~4ms, nothing drawn is no bus traffic at all. Draw everything, then
- * flush once.
- *
- * Usage:
- *
- *   static const pika::lcd::ST75160::Config lcd_cfg = {
- *     &BOARD_LCD_I2C, BOARD_LCD_I2C_ADDR, LINE_LCD_RST,
- *     LINE_LCD_SCL, LINE_LCD_SDA, BOARD_LCD_I2C_PINMODE
- *   };
- *   static pika::lcd::ST75160 lcd{lcd_cfg};
- *   static pika::gfx::Canvas<pika::lcd::ST75160::Framebuffer> canvas{lcd.framebuffer()};
- *
- * @note  The transfer buffers, the framebuffer among them, are shared between
- *        all instances: they have to sit in the one region of memory the DMA
- *        controller can reach and the D-cache leaves alone, and that placement
- *        is not something a caller can be relied on to get right. One instance
- *        is therefore the supported case - see the buffer comment in the .cpp.
- */
+// Driver for ST75160i LCD display controller on I2C.
+//
+// The panel's wiring - its I2C driver, bus address, reset and the two bus pins
+// - is passed in as a Config at construction, so the driver itself does not
+// depend on any board header.
+//
+// The driver does not draw. It owns the framebuffer, in the panel's own
+// memory layout, and hands it out as a Framebuffer that a gfx::Canvas draws
+// pixels into; flush() sends the DDRAM pages those pixels landed on, full
+// width, in one I2C transaction. A whole frame is ~47ms at 400kHz, a line of
+// text ~4ms, nothing drawn is no bus traffic at all. Draw everything, then
+// flush once.
+//
+// Usage:
+//
+//   static const pika::lcd::ST75160::Config lcd_cfg = {
+//     &BOARD_LCD_I2C, BOARD_LCD_I2C_ADDR, LINE_LCD_RST,
+//     LINE_LCD_SCL, LINE_LCD_SDA, BOARD_LCD_I2C_PINMODE
+//   };
+//   static pika::lcd::ST75160 lcd{lcd_cfg};
+//   static pika::gfx::Canvas<pika::lcd::ST75160::Framebuffer> canvas{lcd.framebuffer()};
+//
+// @note  The transfer buffers, the framebuffer among them, are shared between
+//        all instances: they have to sit in the one region of memory the DMA
+//        controller can reach and the D-cache leaves alone, and that placement
+//        is not something a caller can be relied on to get right. One instance
+//        is therefore the supported case - see the buffer comment in the .cpp.
 
 #pragma once
 
@@ -83,9 +81,9 @@ public:
         /** @brief  Records a drawn region, already clipped and not empty. */
         void mark(int x, int y, int w, int h) {
             (void) x;
-            (void) w; /* full width pages are all flush() sends */
+            (void) w;// full width pages are all flush() sends
 
-            /* The flip in set_pixel() puts the top row on the highest page. */
+            // The flip in set_pixel() puts the top row on the highest page.
             const int first = (height - y - h) / page_rows;
             const int last = (height - 1 - y) / page_rows;
             dirty_ |= (uint16_t) (((2U << last) - 1U) & ~((1U << first) - 1U));
@@ -94,7 +92,7 @@ public:
     private:
         friend class ST75160;
 
-        /* 8 display rows per DDRAM page, rounded up to cover every row. */
+        // 8 display rows per DDRAM page, rounded up to cover every row.
         static constexpr int page_rows = 8;
         static constexpr int pages = (height + page_rows - 1) / page_rows;
 
@@ -108,8 +106,8 @@ public:
 
         explicit Framebuffer(uint8_t *bits) : bits_(bits) {}
 
-        uint8_t *bits_;      /**< size bytes, inside the TX buffer.          */
-        uint16_t dirty_ = 0; /**< Bit p set: page p changed since the flush. */
+        uint8_t *bits_;     // size bytes, inside the TX buffer.
+        uint16_t dirty_ = 0;// Bit p set: page p changed since the flush.
     };
 
     /**
@@ -167,4 +165,4 @@ private:
     bool ready_ = false;
 };
 
-} /* namespace pika::lcd */
+}// namespace pika::lcd

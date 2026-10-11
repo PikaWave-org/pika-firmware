@@ -1,7 +1,5 @@
-/*
- * microSD card on SDCD1 with a FatFS volume; after mount() use the FatFS API.
- * No card detect: a card inserted later needs mount() again. One thread only.
- */
+// microSD card on SDCD1 with a FatFS volume; after mount() use the FatFS API.
+// No card detect: a card inserted later needs mount() again. One thread only.
 
 #pragma once
 

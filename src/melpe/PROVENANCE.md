@@ -129,7 +129,7 @@ Built `-O2` for Cortex-M7 (see `src/melpe/sources.cmake` for why the level is
 forced). The whole library is **228KB flash, 26KB RAM**; what a firmware image
 actually pays is less, because `--gc-sections` drops what nothing calls.
 
-`pika::audio::MelpRecorder` calls it at 2400, and in that image the codec
+`pika::audio::MELPeRecorder` calls it at 2400, and in that image the codec
 accounts for **186KB of flash and 10.9KB of RAM** (106.6KB text, 79.2KB
 rodata). The 15KB of RAM that is not there is `npp.c`, dropped because patch 6
 does not call the noise preprocessor and nothing calls the two 1200 wrappers

@@ -8,15 +8,15 @@
 namespace pika::power {
 namespace {
 
-/* Registers, as the datasheet numbers them. */
-constexpr uint8_t reg_adc_ctrl = 0x02U; /* CONV_START, CONV_RATE, ...   */
-constexpr uint8_t reg_ichg = 0x04U;     /* EN_PUMPX, ICHG[6:0]          */
-constexpr uint8_t reg_vreg = 0x06U;     /* VREG[7:2], BATLOWV, VRECHG   */
-constexpr uint8_t reg_timer = 0x07U;    /* EN_TERM, WATCHDOG[5:4], ...  */
-constexpr uint8_t reg_status = 0x0BU;   /* VBUS_STAT, CHRG_STAT, PG ... */
+// Registers, as the datasheet numbers them.
+constexpr uint8_t reg_adc_ctrl = 0x02U;// CONV_START, CONV_RATE, ...
+constexpr uint8_t reg_ichg = 0x04U;    // EN_PUMPX, ICHG[6:0]
+constexpr uint8_t reg_vreg = 0x06U;    // VREG[7:2], BATLOWV, VRECHG
+constexpr uint8_t reg_timer = 0x07U;   // EN_TERM, WATCHDOG[5:4], ...
+constexpr uint8_t reg_status = 0x0BU;  // VBUS_STAT, CHRG_STAT, PG ...
 constexpr uint8_t reg_fault = 0x0CU;
-constexpr uint8_t reg_batv = 0x0EU; /* first of five ADC results    */
-constexpr uint8_t reg_part = 0x14U; /* REG_RST, PN[5:3], DEV_REV    */
+constexpr uint8_t reg_batv = 0x0EU;// first of five ADC results
+constexpr uint8_t reg_part = 0x14U;// REG_RST, PN[5:3], DEV_REV
 
 constexpr uint8_t conv_start = 0x80U;
 constexpr uint8_t conv_rate = 0x40U;
@@ -24,45 +24,41 @@ constexpr uint8_t watchdog_mask = 0x30U;
 constexpr uint8_t pn_mask = 0x38U;
 constexpr uint8_t pn_bq25895 = 0x38U;
 
-/* Synthetic last_error() values, outside the i2cflags_t range. */
+// Synthetic last_error() values, outside the i2cflags_t range.
 constexpr uint32_t err_bus_stuck = 0x80000000U;
 constexpr uint32_t err_start = 0x40000000U;
 constexpr uint32_t err_part = 0x20000000U;
 constexpr uint32_t err_adc_timeout = 0x10000000U;
 
-/*
- * Bus timing from the 130MHz I2C4 kernel clock (PCLK4). PRESC=12 divides it
- * to 10MHz, so one TIMINGR tick is 100ns.
- *
- * Standard mode, 100kHz: SCLL=49 is 5us low, SCLH=39 is 4us high, SCLDEL=4 is
- * 500ns of data setup and SDADEL=2 is 200ns of hold. The chip would take
- * 400kHz, but the pull-ups are 10k, too weak for fast mode's 300ns rise time,
- * and a status read is a handful of bytes.
- */
+// Bus timing from the 130MHz I2C4 kernel clock (PCLK4). PRESC=12 divides it
+// to 10MHz, so one TIMINGR tick is 100ns.
+//
+// Standard mode, 100kHz: SCLL=49 is 5us low, SCLH=39 is 4us high, SCLDEL=4 is
+// 500ns of data setup and SDADEL=2 is 200ns of hold. The chip would take
+// 400kHz, but the pull-ups are 10k, too weak for fast mode's 300ns rise time,
+// and a status read is a handful of bytes.
 const I2CConfig i2c_cfg = {STM32_TIMINGR_PRESC(12U) | STM32_TIMINGR_SCLDEL(4U) | STM32_TIMINGR_SDADEL(2U) |
                                    STM32_TIMINGR_SCLH(39U) | STM32_TIMINGR_SCLL(49U),
                            0U, 0U};
 
-/*
- * Transfer buffers, in AHB SRAM4 through the .ram4 section (0x38000000).
- *
- * I2C4 sits in the D3 domain and its DMA controller is the BDMA, which can
- * reach SRAM4 and nothing else - not the D2 .nocache buffers the LCD uses,
- * and certainly not a thread stack in DTCM. SRAM4 is cacheable by default, so
- * board.c also puts an MPU region over it to keep the CPU and the BDMA looking
- * at the same bytes. Get either half wrong and transfers report MSG_OK while
- * moving nothing; see memory/i2c-dma-silently-broken.md.
- */
+// Transfer buffers, in AHB SRAM4 through the .ram4 section (0x38000000).
+//
+// I2C4 sits in the D3 domain and its DMA controller is the BDMA, which can
+// reach SRAM4 and nothing else - not the D2 .nocache buffers the LCD uses,
+// and certainly not a thread stack in DTCM. SRAM4 is cacheable by default, so
+// board.c also puts an MPU region over it to keep the CPU and the BDMA looking
+// at the same bytes. Get either half wrong and transfers report MSG_OK while
+// moving nothing; see memory/i2c-dma-silently-broken.md.
 #define BDMA_BUF __attribute__((section(".ram4"), aligned(4)))
 
 BDMA_BUF uint8_t tx_buf[2];
-BDMA_BUF uint8_t rx_buf[5]; /* the longest read is the five ADC results */
+BDMA_BUF uint8_t rx_buf[5];// the longest read is the five ADC results
 
-} /* anonymous namespace */
+}// anonymous namespace
 
 bool BQ25895::xfer(size_t tx_len, size_t rx_len) {
-    /* Same recovery as ST75160: a timed out transfer leaves the driver in
-     I2C_LOCKED, where any further call asserts, so restart it first.*/
+    // Same recovery as ST75160: a timed out transfer leaves the driver in
+    // I2C_LOCKED, where any further call asserts, so restart it first.
     if (cfg_.i2c->state != I2C_READY) {
         i2cStop(cfg_.i2c);
         if (i2cStart(cfg_.i2c, &i2c_cfg) != HAL_RET_SUCCESS) {
@@ -85,7 +81,7 @@ bool BQ25895::xfer(size_t tx_len, size_t rx_len) {
 
 bool BQ25895::read(uint8_t reg, uint8_t *out, size_t n) {
     tx_buf[0] = reg;
-    if (!xfer(1U, n)) {
+    if (not xfer(1U, n)) {
         return false;
     }
     std::copy_n(rx_buf, n, out);
@@ -100,7 +96,7 @@ bool BQ25895::write(uint8_t reg, uint8_t value) {
 
 bool BQ25895::update(uint8_t reg, uint8_t mask, uint8_t value) {
     uint8_t v;
-    if (!read(reg, &v, 1U)) {
+    if (not read(reg, &v, 1U)) {
         return false;
     }
     return write(reg, (uint8_t) ((v & ~mask) | (value & mask)));
@@ -115,8 +111,8 @@ void BQ25895::int_cb(void *arg) {
 bool BQ25895::init() {
     error_flags_ = 0U;
 
-    /* First, so main() has something to wait on even if the chip never
-       answers: it then sleeps rather than retrying a dead bus. */
+    // First, so main() has something to wait on even if the chip never
+    // answers: it then sleeps rather than retrying a dead bus.
     chBSemObjectInit(&int_sem_, true);
 
     if (i2cStart(cfg_.i2c, &i2c_cfg) != HAL_RET_SUCCESS) {
@@ -125,7 +121,7 @@ bool BQ25895::init() {
     }
 
     uint8_t part;
-    if (!read(reg_part, &part, 1U)) {
+    if (not read(reg_part, &part, 1U)) {
         return false;
     }
     if ((part & pn_mask) != pn_bq25895) {
@@ -133,34 +129,34 @@ bool BQ25895::init() {
         return false;
     }
 
-    if (!update(reg_timer, watchdog_mask, 0U)) {
+    if (not update(reg_timer, watchdog_mask, 0U)) {
         return false;
     }
 
     const uint16_t ichg = std::min<uint16_t>(cfg_.charge_current_ma, 5056U) / 64U;
-    if (!update(reg_ichg, 0x7FU, (uint8_t) ichg)) {
+    if (not update(reg_ichg, 0x7FU, (uint8_t) ichg)) {
         return false;
     }
 
     const uint16_t vreg_mv = std::clamp<uint16_t>(cfg_.charge_voltage_mv, 3840U, 4608U);
-    if (!update(reg_vreg, 0xFCU, (uint8_t) (((vreg_mv - 3840U) / 16U) << 2U))) {
+    if (not update(reg_vreg, 0xFCU, (uint8_t) (((vreg_mv - 3840U) / 16U) << 2U))) {
         return false;
     }
 
-    /* Disable AUTO_DPDM */
-    if (!update(0x02, 0x0DU, 0)) {
+    // Disable AUTO_DPDM
+    if (not update(0x02, 0x0DU, 0)) {
         return false;
     }
 
-    /* Set ILIM = 2A */
-    if (!update(0x00, 0x3FU, 0x28)) {
+    // Set ILIM = 2A
+    if (not update(0x00, 0x3FU, 0x28)) {
         return false;
     }
 
-    /* Throw away whatever faults latched before we were listening, so the
-     first read_status() reports the present rather than the boot.*/
+    // Throw away whatever faults latched before we were listening, so the
+    // first read_status() reports the present rather than the boot.
     uint8_t stale;
-    if (!read(reg_fault, &stale, 1U)) {
+    if (not read(reg_fault, &stale, 1U)) {
         return false;
     }
 
@@ -180,24 +176,24 @@ void BQ25895::main() {
 
 bool BQ25895::update() {
     uint8_t r[5];
-    if (!read(reg_status, r, 2U)) {
+    if (not read(reg_status, r, 2U)) {
         return false;
     }
     status_.input_connected = (r[0] >> 5U) != 0;
     status_.charging = (Charge) ((r[0] >> 3U) & 0x03U);
 
-    /* One shot rather than the 1s continuous mode: the ADC draws current,
-     and on battery that is current for a reading nobody asked for.*/
-    if (!update(reg_adc_ctrl, conv_start | conv_rate, conv_start)) {
+    // One shot rather than the 1s continuous mode: the ADC draws current,
+    // and on battery that is current for a reading nobody asked for.
+    if (not update(reg_adc_ctrl, conv_start | conv_rate, conv_start)) {
         return false;
     }
 
-    /* CONV_START reads back 1 until the conversion is done. Bounded and
-     sleeping, never spinning: see memory/chibios-busy-wait-starves-threads.*/
+    // CONV_START reads back 1 until the conversion is done. Bounded and
+    // sleeping, never spinning: see memory/chibios-busy-wait-starves-threads.
     uint8_t ctrl = conv_start;
-    for (int i = 0; (i < 100) && ((ctrl & conv_start) != 0U); i++) {
+    for (int i = 0; (i < 100) and ((ctrl & conv_start) != 0U); i++) {
         chThdSleepMilliseconds(10);
-        if (!read(reg_adc_ctrl, &ctrl, 1U)) {
+        if (not read(reg_adc_ctrl, &ctrl, 1U)) {
             return false;
         }
     }
@@ -206,8 +202,8 @@ bool BQ25895::update() {
         return false;
     }
 
-    /* REG0E..REG12: BATV, SYSV, TSPCT, VBUSV, ICHGR. */
-    if (!read(reg_batv, r, 5U)) {
+    // REG0E..REG12: BATV, SYSV, TSPCT, VBUSV, ICHGR.
+    if (not read(reg_batv, r, 5U)) {
         return false;
     }
 
@@ -216,4 +212,4 @@ bool BQ25895::update() {
     return true;
 }
 
-} /* namespace pika::power */
+}// namespace pika::power

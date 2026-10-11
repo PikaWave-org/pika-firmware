@@ -6,10 +6,10 @@
 namespace pika::storage {
 namespace {
 
-/* 4 bit bus. */
+// 4 bit bus.
 const SDCConfig sdc_cfg = {SDC_MODE_4BIT, 0};
 
-/* 512 byte sectors to MiB. */
+// 512 byte sectors to MiB.
 constexpr uint32_t sectors_to_mb(uint32_t sectors) { return sectors / 2048U; }
 
 }// namespace
@@ -18,7 +18,7 @@ bool SDCard::mount() {
     if (mounted_) {
         return true;
     }
-    if (!started_) {
+    if (not started_) {
         sdcStart(&SDCD1, &sdc_cfg);
         started_ = true;
     }
@@ -53,7 +53,7 @@ uint32_t SDCard::capacity_mb() const {
 }
 
 uint32_t SDCard::free_mb() {
-    if (!mounted_) {
+    if (not mounted_) {
         return 0;
     }
     DWORD clusters;

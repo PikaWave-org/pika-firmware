@@ -14,8 +14,6 @@ public:
     virtual bool start_stream(AudioSource &src) = 0;
     virtual void stop_stream() = 0;
 
-    /* No bit depth: sources deal in signed 16 bit at full scale, and what the
-       converter underneath is has stopped being their business. */
     [[nodiscard]] virtual uint32_t sample_rate() const = 0;
 };
 
@@ -32,21 +30,19 @@ public:
     virtual size_t fill_audio_buffer(std::span<int16_t> buf) = 0;
 };
 
-/*
- * The capture-side mirror of AudioSource: where a source is pulled from by
- * whatever plays it, a consumer is pushed to by whatever records it.
- *
- * The direction is not a style choice. Each converter is paced by its own
- * hardware clock, so the clocked side drives and the other side is passive:
- * playback pulls from an AudioSource, capture pushes to an AudioConsumer. A
- * microphone made to look like an AudioSource would have to buffer and
- * reconcile two clocks for no gain, since nothing here plays and records at
- * once.
- *
- * There is deliberately no return value. A source ends a stream by returning
- * short, but a recording has no natural end - the device decides when to stop,
- * because a button was released.
- */
+// The capture-side mirror of AudioSource: where a source is pulled from by
+// whatever plays it, a consumer is pushed to by whatever records it.
+//
+// The direction is not a style choice. Each converter is paced by its own
+// hardware clock, so the clocked side drives and the other side is passive:
+// playback pulls from an AudioSource, capture pushes to an AudioConsumer. A
+// microphone made to look like an AudioSource would have to buffer and
+// reconcile two clocks for no gain, since nothing here plays and records at
+// once.
+//
+// There is deliberately no return value. A source ends a stream by returning
+// short, but a recording has no natural end - the device decides when to stop,
+// because a button was released.
 class AudioConsumer : public IntrusiveListItem<AudioConsumer> {
 public:
     /**

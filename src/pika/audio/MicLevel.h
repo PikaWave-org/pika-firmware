@@ -1,6 +1,4 @@
-/*
- * A simple level meter on the capture path.
- */
+// A simple level meter on the capture path.
 
 #pragma once
 

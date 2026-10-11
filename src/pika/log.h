@@ -1,20 +1,18 @@
-/*
- * Debug logging over the board's console UART (BOARD_DBG_SERIAL, 115200 8N1
- * by default), for bring-up and monitoring.
- *
- * Every line is stamped with the time since boot and terminated with CRLF:
- *
- *   [     0.000] pika_go_0 starting
- *   [     1.234] lcd: flush took 47ms
- *
- * Usage: call pika::log_init() once after chSysInit(), then LOG() from any
- * thread.
- *
- *   LOG("lcd: init failed, i2c error 0x%08x", pika::lcd::last_error());
- *
- * Formatting is chprintf()'s, which is a subset of printf(): no %f unless
- * CHPRINTF_USE_FLOAT is enabled, no length modifiers beyond l/L.
- */
+// Debug logging over the board's console UART (BOARD_DBG_SERIAL, 115200 8N1
+// by default), for bring-up and monitoring.
+//
+// Every line is stamped with the time since boot and terminated with CRLF:
+//
+//   [     0.000] pika_go_0 starting
+//   [     1.234] lcd: flush took 47ms
+//
+// Usage: call pika::log_init() once after chSysInit(), then LOG() from any
+// thread.
+//
+//   LOG("lcd: init failed, i2c error 0x%08x", pika::lcd::last_error());
+//
+// Formatting is chprintf()'s, which is a subset of printf(): no %f unless
+// CHPRINTF_USE_FLOAT is enabled, no length modifiers beyond l/L.
 
 #pragma once
 
@@ -36,7 +34,7 @@ void log_init();
  */
 void log_printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
-} /* namespace pika */
+}// namespace pika
 
 /**
  * @brief   Logs one line, no trailing "\r\n" needed in the format string.

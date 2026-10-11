@@ -12,7 +12,8 @@
 #define FF_USE_CHMOD        0
 #define FF_USE_LABEL        0
 #define FF_USE_FORWARD      0
-#define FF_USE_STRFUNC      0
+/* f_gets(). */
+#define FF_USE_STRFUNC      1
 #define FF_PRINT_LLI        0
 #define FF_PRINT_FLOAT      0
 #define FF_STRF_ENCODE      0

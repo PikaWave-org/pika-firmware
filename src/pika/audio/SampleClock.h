@@ -1,23 +1,21 @@
-/*
- * The 32kHz sample clock: one timer's TRGO paces both converters, the DAC on
- * the way out and the ADC on the way in.
- *
- * There is one of these on the board rather than one per converter, because
- * the speaker and the microphone never run at the same time - the device
- * either talks or listens. That is a hardware-level decision, so this class
- * enforces it rather than trusting callers: start() claims the clock for an
- * owner and refuses anyone else until it is released.
- *
- * Usage:
- *
- *   static pika::audio::SampleClock sample_clock{&BOARD_SAMPLE_TIMER};
- *   static const pika::audio::DACSpeaker::Config spk_cfg = {
- *     &BOARD_SPK_DAC, &sample_clock, LINE_SPK_EN, BOARD_SPK_SETTLE_MS
- *   };
- *
- * The converters take it in their Config and never name a timer themselves,
- * which is what keeps them free of the board header.
- */
+// The 32kHz sample clock: one timer's TRGO paces both converters, the DAC on
+// the way out and the ADC on the way in.
+//
+// There is one of these on the board rather than one per converter, because
+// the speaker and the microphone never run at the same time - the device
+// either talks or listens. That is a hardware-level decision, so this class
+// enforces it rather than trusting callers: start() claims the clock for an
+// owner and refuses anyone else until it is released.
+//
+// Usage:
+//
+//   static pika::audio::SampleClock sample_clock{&BOARD_SAMPLE_TIMER};
+//   static const pika::audio::DACSpeaker::Config spk_cfg = {
+//     &BOARD_SPK_DAC, &sample_clock, LINE_SPK_EN, BOARD_SPK_SETTLE_MS
+//   };
+//
+// The converters take it in their Config and never name a timer themselves,
+// which is what keeps them free of the board header.
 
 #pragma once
 
@@ -64,12 +62,10 @@ public:
     [[nodiscard]] bool is_busy() const { return owner_ != nullptr; }
 
 private:
-    /*
-     * The timer counts at 4MHz and the TRGO comes from its update event, so
-     * the sample rate is the counter rate divided by the interval below. 4MHz
-     * is high enough that 32kHz divides it exactly with room for other rates,
-     * and low enough that the prescaler fits.
-     */
+    // The timer counts at 4MHz and the TRGO comes from its update event, so
+    // the sample rate is the counter rate divided by the interval below. 4MHz
+    // is high enough that 32kHz divides it exactly with room for other rates,
+    // and low enough that the prescaler fits.
     static constexpr uint32_t frequency = 4000000U;
     static constexpr uint32_t interval = frequency / rate;
 
@@ -78,8 +74,8 @@ private:
     static_assert(STM32_TIMCLK1 % frequency == 0U, "timer prescaler must be exact, or the sample rate drifts");
     static_assert((STM32_TIMCLK1 / frequency) - 1U <= 0xFFFFU, "prescaler does not fit the 16 bit register");
 
-    /* MMS = 010, so the update event drives TRGO. No callback and no
-       interrupt: nothing here runs in software. */
+    // MMS = 010, so the update event drives TRGO. No callback and no
+    // interrupt: nothing here runs in software.
     static constexpr GPTConfig tim_cfg = {//
             .frequency = frequency,
             .callback = nullptr,
@@ -88,8 +84,8 @@ private:
 
     GPTDriver *tim_;
 
-    /* The claim. Written by the claiming thread and cleared from a DMA
-       callback, hence volatile. */
+    // The claim. Written by the claiming thread and cleared from a DMA
+    // callback, hence volatile.
     const void *volatile owner_ = nullptr;
 };
 

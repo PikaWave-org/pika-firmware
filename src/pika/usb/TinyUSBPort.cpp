@@ -5,16 +5,16 @@ static event_source_t g_tinyusb_event_source;
 static bool g_tinyusb_event_inited = false;
 
 static void tinyusb_event_init() {
-    if (!g_tinyusb_event_inited) {
+    if (not g_tinyusb_event_inited) {
         osalEventObjectInit(&g_tinyusb_event_source);
         g_tinyusb_event_inited = true;
     }
 }
-} // namespace
+}// namespace
 
 void tud_cdc_rx_cb(uint8_t itf) {
     (void) itf;
-    if (!g_tinyusb_event_inited) {
+    if (not g_tinyusb_event_inited) {
         return;
     }
 
@@ -23,7 +23,7 @@ void tud_cdc_rx_cb(uint8_t itf) {
 
 void tud_cdc_tx_complete_cb(uint8_t itf) {
     (void) itf;
-    if (!g_tinyusb_event_inited) {
+    if (not g_tinyusb_event_inited) {
         return;
     }
 
@@ -75,4 +75,4 @@ event_source_t *TinyUSBPort::event_source() {
 const char *TinyUSBPort::get_driver_name() const {
     return "TinyUSB";
 }
-} // namespace pika::drivers
+}// namespace pika::usb

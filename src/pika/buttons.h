@@ -1,21 +1,18 @@
-/*
- * Press events from a set of active low GPIO lines, which arrive as a Config
- * so that no board header is needed here.
- *
- * Debouncing is a lockout, not a resample: the first edge is believed at once
- * and the line ignored for the next debounce period. A press reports
- * immediately; the trade is that the level is read while it may still be
- * bouncing, and a wrong read costs one missed press until the next edge.
- *
- * Only presses are broadcast. Releases move the state so the next press is
- * seen, so ask pressed() about a held button.
- *
- * @note  Two lines on pads with the same number cannot both be interrupt
- *        driven: an EXTI channel is picked by pad number and maps to one port
- *        at a time. The Config resolves it by marking one polled, costing that
- *        one up to a poll period of latency. That path exists only for this
- *        collision and goes with the next pinout - do not build on it.
- */
+// Press and release events from a set of active low GPIO lines, which arrive
+// as a Config so that no board header is needed here.
+//
+// Debouncing is a lockout, not a resample: the first edge is believed at once
+// and the line ignored for the next debounce period. A press reports
+// immediately; the trade is that the level is read while it may still be
+// bouncing, and a wrong read costs one missed press until the next edge.
+//
+// Both edges are broadcast, each button with a press and a release flag.
+//
+// @note  Two lines on pads with the same number cannot both be interrupt
+//        driven: an EXTI channel is picked by pad number and maps to one port
+//        at a time. The Config resolves it by marking one polled, costing that
+//        one up to a poll period of latency. That path exists only for this
+//        collision and goes with the next pinout - do not build on it.
 
 #pragma once
 
@@ -29,7 +26,7 @@ namespace pika::input {
 
 /**
  * @brief   The buttons, in the order the Config lists them.
- * @note    The enumerator value is the event flag's bit position, so it is
+ * @note    The enumerator value is the press flag's bit position, so it is
  *          also the index into Config::lines.
  */
 enum class Button : uint8_t { pwr, up, down, right, left, ptt, lsn, count };
@@ -62,11 +59,14 @@ public:
      */
     void init();
 
-    /** @brief  Event source carrying one flag per button, see flag(). */
+    /** @brief  Event source carrying press_flag() and release_flag(). */
     event_source_t &events() { return events_; }
 
     /** @brief  Event flag standing for a press of @p b. */
-    eventflags_t flag(Button b) { return (eventflags_t) 1U << (cfg_.event_offset + (eventid_t) b); }
+    eventflags_t press_flag(Button b) { return (eventflags_t) 1U << (cfg_.event_offset + (eventid_t) b); }
+
+    /** @brief  Event flag standing for a release of @p b. */
+    eventflags_t release_flag(Button b) { return (eventflags_t) 1U << (cfg_.event_offset + count + (eventid_t) b); }
 
     /** @brief  Current debounced level of @p b, true while it is held. */
     bool pressed(Button b) const;
@@ -78,16 +78,16 @@ private:
     static constexpr sysinterval_t DEBOUNCE = TIME_MS2I(20);
     static constexpr sysinterval_t POLL_PERIOD = TIME_MS2I(10);
 
-    /* One button's state. An edge callback is handed the record for the line
-       that raised it, so it reaches its own state without searching. */
+    // One button's state. An edge callback is handed the record for the line
+    // that raised it, so it reaches its own state without searching.
     struct State {
-        Button button;      /**< Which Button this record stands for.      */
-        systime_t changed;  /**< When it last changed, for the lockout.    */
-        volatile bool down; /**< Debounced level, true while pressed.      */
+        Button button;     // Which Button this record stands for.
+        systime_t changed; // When it last changed, for the lockout.
+        volatile bool down;// Debounced level, true while pressed.
     };
 
-    /* The callback's one void* carries the State, so the driver is reached
-       through here instead. One driver per board; init() asserts on a second. */
+    // The callback's one void* carries the State, so the driver is reached
+    // through here instead. One driver per board; init() asserts on a second.
     static Buttons *instance_;
 
     static void edge_cb(void *arg);

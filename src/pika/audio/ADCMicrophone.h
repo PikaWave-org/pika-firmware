@@ -1,20 +1,18 @@
-/*
- * Driver for the microphone: an analog preamp into ADC1, read by DMA.
- *
- * The capture-side mirror of DACSpeaker, and shaped like it. The wiring comes
- * in as a Config filled from the board's BOARD_MIC_* and LINE_MIC_* defines,
- * so the driver depends on no board header.
- *
- * Samples come in at a fixed rate: the SampleClock's TRGO paces the ADC, and
- * DMA fills a two-half circular buffer whose transfer callback hands each
- * finished half to an AudioConsumer. The direction is the only real difference
- * from the speaker - there the callback asks a source to fill the buffer, here
- * it gives a full one away.
- *
- * @note  The sample buffer is shared between all instances, because where it
- *        sits in memory is the driver's business and not a caller's. One
- *        instance is therefore the supported case - see the .cpp.
- */
+// Driver for the microphone: an analog preamp into ADC1, read by DMA.
+//
+// The capture-side mirror of DACSpeaker, and shaped like it. The wiring comes
+// in as a Config filled from the board's BOARD_MIC_* and LINE_MIC_* defines,
+// so the driver depends on no board header.
+//
+// Samples come in at a fixed rate: the SampleClock's TRGO paces the ADC, and
+// DMA fills a two-half circular buffer whose transfer callback hands each
+// finished half to an AudioConsumer. The direction is the only real difference
+// from the speaker - there the callback asks a source to fill the buffer, here
+// it gives a full one away.
+//
+// @note  The sample buffer is shared between all instances, because where it
+//        sits in memory is the driver's business and not a caller's. One
+//        instance is therefore the supported case - see the .cpp.
 
 #pragma once
 
@@ -91,24 +89,20 @@ private:
     static constexpr int ADC_BIT_DEPTH = 16;
     static constexpr uint32_t ADC_VALUE_MID = 1U << (16 - 1);
 
-    /*
-     * EXTSEL value selecting TIM6's TRGO as the ADC trigger. Not the same
-     * number the DAC uses for the same timer - the two converters have
-     * separate trigger tables - and RM0468 is the only place either appears.
-     */
+    // EXTSEL value selecting TIM6's TRGO as the ADC trigger. Not the same
+    // number the DAC uses for the same timer - the two converters have
+    // separate trigger tables - and RM0468 is the only place either appears.
     static constexpr uint32_t TRG_TIM6_TRGO = 13U;
 
-    /*
-     * Sampling time. At the 20MHz ADC clock 64.5 + 7.5 cycles is 3.6us against
-     * a 31.25us sample period, so the long setting costs nothing and leaves
-     * the sample-and-hold ample time to track the preamp through whatever
-     * series resistance is on the pin.
-     */
+    // Sampling time. At the 20MHz ADC clock 64.5 + 7.5 cycles is 3.6us against
+    // a 31.25us sample period, so the long setting costs nothing and leaves
+    // the sample-and-hold ample time to track the preamp through whatever
+    // series resistance is on the pin.
     static constexpr uint32_t SMP_TIME = ADC_SMPR_SMP_64P5;
 
-    /* Samples per buffer half, i.e. 8ms of audio and a 125Hz drain callback. The
-       same figure as the speaker's, so a recording and a playback move in blocks
-       of the same size. */
+    // Samples per buffer half, i.e. 8ms of audio and a 125Hz drain callback. The
+    // same figure as the speaker's, so a recording and a playback move in blocks
+    // of the same size.
     static constexpr unsigned mic_buffer_half_len = 256U;
     static __attribute__((section(".nocache"), aligned(4))) adcsample_t mic_buffer[2U * mic_buffer_half_len];
 
@@ -124,24 +118,22 @@ private:
 
     void preamp(bool on);
 
-    /* I-class twin of stop_capture(), for use from the DMA callback. */
+    // I-class twin of stop_capture(), for use from the DMA callback.
     void stop_capture_i();
 
     void fill_cb(std::span<adcsample_t> buf);
 
     Config cfg_{};
 
-    /*
-     * Filled in init() rather than being a constant initializer like the
-     * speaker's, because which input the preamp is wired to arrives in the
-     * Config and decides three of the fields below.
-     */
+    // Filled in init() rather than being a constant initializer like the
+    // speaker's, because which input the preamp is wired to arrives in the
+    // Config and decides three of the fields below.
     ADCConversionGroup adc_grp_{};
 
     ADCConfig adc_cfg_{};
 
-    volatile uint32_t error_flags_ = 0U; /**< Also set from the callback.  */
-    bool ready_ = false;                 /**< init() succeeded.            */
+    volatile uint32_t error_flags_ = 0U;// Also set from the callback.
+    bool ready_ = false;                // init() succeeded.
     bool running_ = false;
     float agc_gain_ = 1.0f;
 };

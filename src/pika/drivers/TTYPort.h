@@ -45,4 +45,4 @@ protected:
 /**
  * @}
  */
-} // namespace pika::drivers
+}// namespace pika::usb
