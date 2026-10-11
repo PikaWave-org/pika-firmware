@@ -24,6 +24,7 @@ set(MESSGEN_TYPE_DIR "${CMAKE_CURRENT_LIST_DIR}/msg/types")
 set(MESSGEN_PROTO_DIR "${CMAKE_CURRENT_LIST_DIR}/msg/protocols")
 messgen_add_types_library(msgs_types "${PROJECT_ROOT}/msg/types" "cpp_standard=23")
 messgen_add_proto_library(msgs_proto_mac "${PROJECT_ROOT}/msg/proto" "pika/proto/mac" msgs_types)
+messgen_add_proto_library(msgs_proto_app "${PROJECT_ROOT}/msg/proto" "pika/proto/app" msgs_types)
 
 add_subdirectory(targets/firmware)
 add_subdirectory(targets/test)

@@ -3,6 +3,7 @@
 #include <ch.hpp>
 #undef HASH// HASH macro interferes with messgen HASH
 
+#include <pika/FixedVector.h>
 #include <pika/Time.h>
 #include <pika/log.h>
 #include <pika/proto/mac.h>
@@ -12,53 +13,8 @@
 
 namespace pika {
 
-using Address = uint32_t;
+using Address = uint64_t;
 using MessageID = uint32_t;
-
-template<class T, size_t SIZE>
-class FixedVector {
-public:
-    T *data() { return storage_.data(); }
-
-    size_t size() { return size_; }
-
-    T *add(const T &value) {
-        if (size_ < storage_.size()) {
-            T *ret = &storage_[size_];
-            *ret = value;
-            ++size_;
-            return ret;
-        }
-        return nullptr;
-    }
-
-    T *add() {
-        if (size_ < storage_.size()) {
-            T *ret = &storage_[size_];
-            ++size_;
-            return ret;
-        }
-        return nullptr;
-    }
-
-    void size(size_t sz) { size_ = sz; }
-
-    void clear() { size_ = 0; }
-
-    size_t cap() { return storage_.size(); }
-
-    operator std::span<T>() { return {storage_.data(), size_}; }
-
-    T *begin() { return storage_.data(); }
-
-    T *end() { return storage_.data() + size_; }
-
-    bool is_full() const { return size_ >= storage_.size(); }
-
-private:
-    std::array<T, SIZE> storage_{};
-    size_t size_{};
-};
 
 class FrameHandler {
 public:
@@ -81,6 +37,23 @@ public:
         while (true) {
             // TX
             Time t = now();
+            if (t > last_sync_sent_ + SYNC_INTERVAL) {
+                // Broadcast sync packet
+                tx_buf_[0] = proto::mac::sync::MESSAGE_ID;
+                types::mac::sync sync_frame{
+                        .src_addr = addr_,
+                        .time = t,
+                        .stratum = 1,
+                        .listen_freq = radio_->freq() / 1000,
+                        .listen_time = listen_window_.time - t,
+                        .listen_interval = listen_window_.interval,
+                        .listen_duration = listen_window_.duration,
+                };
+                tx_buf_.resize(1 + sync_frame.serialize(&tx_buf_[1]));
+                LOG("tx sync");
+                radio_->tx(tx_buf_);
+            }
+            t = now();
             auto lsn_win = get_listen_window(listen_window_, t);
             for (auto &peer: peers_) {
                 if (t + radio_->tx_duration(peer.tx_buf.size()) >= lsn_win.first) {
@@ -92,25 +65,16 @@ public:
                     // Peer is synchronized, send data frame if needed
                     if (peer.tx_buf.size() != 0) {
                         LOG("tx -> %08X: %i", peer.addr, peer.tx_buf.size());
-                        radio_->tx(peer.tx_buf);
+                        types::mac::data_frame data_frame{
+                                .src_addr = addr_,
+                                .dst_addr = peer.addr,
+                                .payload = messgen::bytes(peer.tx_buf.data(), peer.tx_buf.size()),
+                        };
+                        tx_buf_[0] = proto::mac::data_frame::MESSAGE_ID;
+                        tx_buf_.resize(data_frame.serialize(&tx_buf_[1]) + 1);
+                        radio_->tx(tx_buf_);
                         peer.tx_buf.clear();
                     }
-                } else {
-                    // Peer not synced, try to sync
-                    std::array<uint8_t, types::mac::sync::FIXED_SIZE + 1> buf;
-                    buf[0] = proto::mac::sync::MESSAGE_ID;
-                    types::mac::sync sync_frame{
-                            .src_addr = addr_,
-                            .time = t,
-                            .stratum = 1,
-                            .listen_freq = radio_->freq() / 1000,
-                            .listen_time = listen_window_.time - t,
-                            .listen_interval = listen_window_.interval,
-                            .listen_duration = listen_window_.duration,
-                    };
-                    sync_frame.serialize(&buf[1]);
-                    LOG("tx -> %08X: sync", peer.addr);
-                    radio_->tx(buf);
                 }
             }
 
@@ -121,15 +85,15 @@ public:
                 if (rx_buf.size() > 0) {
                     uint8_t frame_type = rx_buf[0];
                     LOG("rx type=%i size=%i", 0, frame_type, rx_buf.size());
-                    proto::mac::dispatch_message(rx_buf[0], messgen::bytes(&rx_buf[1], rx_buf.size() - 1),
-                                                 [&](const auto &recv_msg) {
-                                                     using RecvMsgType = std::decay_t<decltype(recv_msg)>;
-                                                     typename RecvMsgType::data_type_strg actual_data;
-                                                     auto res = recv_msg.deserialize(actual_data);
-                                                     if (res >= 0) {
-                                                         handle_frame(actual_data);
-                                                     }
-                                                 });
+                    proto::mac::dispatch_message(
+                            rx_buf[0], messgen::bytes(&rx_buf[1], rx_buf.size() - 1), [&](const auto &recv_msg) {
+                                using RecvMsgType = std::decay_t<decltype(recv_msg)>;
+                                typename RecvMsgType::data_type actual_data;
+                                auto res = recv_msg.deserialize(actual_data, messgen::empty_alloc, messgen::NoCopy{});
+                                if (res >= 0) {
+                                    handle_frame(actual_data);
+                                }
+                            });
                 }
                 t = now();
             }
@@ -142,27 +106,31 @@ public:
 
     void set_frame_handler(FrameHandler *handler) { handler_ = handler; }
 
-    bool send_data_frame(Address dst_addr, std::span<const uint8_t> frame) {
+    bool is_busy(Address dst_addr) {
+        Peer &peer = get_peer(dst_addr);
+        return peer.tx_buf.size() != 0;
+    }
+
+    template<class MSG>
+    bool send_data_frame(Address dst_addr, MSG &&msg) {
         Peer &peer = get_peer(dst_addr);
         if (peer.tx_buf.size() != 0) {
             return false;
         }
-
-        types::mac::data_frame data_frame{
-                .src_addr = addr_,
-                .dst_addr = dst_addr,
-                .seq = 0,//TODO
-                .ack = 0,//TODO
-                .payload = messgen::bytes(&frame),
-        };
-
-        peer.tx_buf.data()[0] = proto::mac::data_frame::MESSAGE_ID;
-        peer.tx_buf.size(data_frame.serialize(&peer.tx_buf.data()[1]) + 1);
-        return true;
+        size_t sz = 1 + msg.serialized_size();
+        if (peer.tx_buf.cap() >= sz) {
+            peer.tx_buf.resize(sz);
+            using ActualType = std::decay_t<decltype(msg)>;
+            peer.tx_buf[0] = ActualType::message_type::MESSAGE_ID;
+            msg.serialize(peer.tx_buf.data() + 1);
+            return true;
+        }
+        return false;
     }
 
 private:
     static constexpr size_t PEERS_MAX = 8;
+    static constexpr Time SYNC_INTERVAL = 5 * SECOND;
 
     struct Peer {
         Address addr{};
@@ -181,6 +149,9 @@ private:
     RADIO *radio_ = nullptr;
     FrameHandler *handler_ = nullptr;
     FixedVector<Peer, PEERS_MAX> peers_;
+    Time last_sync_sent_{};
+
+    FixedVector<uint8_t, 256> tx_buf_;
 
     Peer &get_peer(Address addr) {
         Peer *oldest = nullptr;
@@ -192,7 +163,7 @@ private:
                 oldest = &peer;
             }
         }
-        if (peers_.is_full()) {
+        if (peers_.full()) {
             // Replace the oldest peer
             *oldest = {};
             oldest->addr = addr;
@@ -222,11 +193,25 @@ private:
         return t >= win.first and t < win.second;
     }
 
-    void handle_frame(const types::mac::strg::sync &sync) { LOG("rx <- %08X: sync", sync.src_addr); }
+    void handle_frame(const types::mac::sync &sync) {
+        LOG("rx <- %08X: sync", sync.src_addr);
+        Peer &peer = get_peer(sync.src_addr);
+        peer.listen_window.time = sync.listen_time;
+        peer.listen_window.interval = sync.listen_interval;
+        peer.listen_window.duration = sync.listen_duration;
+        peer.last_seen = now();
+        peer.is_synced = true;
+        if (peer.tx_buf.empty() and handler_ != nullptr) {
+            handler_->on_data_frame_sent(peer.addr);
+        }
+    }
 
-    void handle_frame(const types::mac::strg::data_frame &data) { LOG("rx <- %08X: data_frame", data.src_addr); }
-
-    void handle_frame(const types::mac::strg::data_ack &ack) { LOG("rx <- %08X: data_ack", ack.src_addr); }
+    void handle_frame(const types::mac::data_frame &data) {
+        LOG("rx <- %08X: data_frame", data.src_addr);
+        if (data.dst_addr == addr_ and handler_ != nullptr) {
+            handler_->on_data_frame_received(data.src_addr, data.payload);
+        }
+    }
 };
 
 }// namespace pika

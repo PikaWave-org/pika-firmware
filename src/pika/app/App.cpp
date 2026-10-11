@@ -1,9 +1,7 @@
 #include "App.h"
 
 #include <pika/fatfs_wrapper/fatfsWrapper.h>
-#include <pika/lcd/images/pika_logo.h>
 
-#include "chprintf.h"
 #include "ff.h"
 
 #include <charconv>
@@ -37,7 +35,7 @@ bool parse_peer(std::string_view line, Peer &peer) {
         key.size() != peer.key.size() * 2) {
         return false;
     }
-    const auto [id_end, id_ec] = std::from_chars(id.data(), id.data() + id.size(), peer.id, 16);
+    const auto [id_end, id_ec] = std::from_chars(id.data(), id.data() + id.size(), peer.addr, 16);
     if (id_ec != std::errc{} or id_end != id.data() + id.size()) {
         return false;
     }
@@ -82,146 +80,12 @@ uint32_t next_msg_id(const char *dir) {
 
 }// namespace
 
-void StatusBar::draw() {
-    app_->canvas().rect<false>(0, 0, 160, status_bar_h);
-    char buf[20];
-    chsnprintf(buf, sizeof(buf), "%s %.2f", app_->battery_status().charging != Charge::off ? "CHG" : "   ",
-               app_->battery_status().voltage / 1000.0f);
-    app_->canvas().text<true>(2, 0, buf);
-}
-
-bool Screen::handle_back(input::Button button) {
-    if (button != input::Button::left or parent_screen_ == nullptr) {
-        return false;
-    }
-    app_->activate_screen(*parent_screen_);
-    return true;
-}
-
-void Menu::draw() {
-    app_->canvas().rect<true>(0, title_y, 160, title_h);
-    app_->canvas().text<false>(2, title_y + 2, title_);
-
-    for (size_t i = 0; i < items_.size(); i++) {
-        app_->canvas().text(label_x, (int) i * row_h + items_y, items_[i].name);
-    }
-    draw_cursor(true);
-}
-
-void Menu::draw_cursor(bool on) {
-    if (items_.empty()) {
-        return;
-    }
-    const int y = cursor_ * row_h + items_y;
-    if (on) {
-        app_->canvas().text<true>(4, y, ">");
-    } else {
-        app_->canvas().text<false>(4, y, ">");
-    }
-}
-
-void Menu::move_cursor(int cursor) {
-    draw_cursor(false);
-    cursor_ = cursor;
-    draw_cursor(true);
-}
-
-void Screen::init_activate() {
-    init();
-    app_->activate_screen(*this);
-}
-
-bool Menu::on_press(input::Button button) {
-    const int last = (int) items_.size() - 1;
-    switch (button) {
-        case input::Button::up:
-            if (cursor_ > 0) {
-                move_cursor(cursor_ - 1);
-            }
-            return true;
-        case input::Button::down:
-            if (cursor_ < last) {
-                move_cursor(cursor_ + 1);
-            }
-            return true;
-        case input::Button::right:
-            if (cursor_ <= last and items_[cursor_].on_activate != nullptr) {
-                items_[cursor_].on_activate(owner_);
-            }
-            return true;
-        default:
-            return false;
-    }
-}
-
-void AboutScreen::draw() {
-    app_->canvas().clear();
-    app_->canvas().bitmap(0, 0, pika::lcd::pika_logo_width, pika::lcd::pika_logo_height, pika::lcd::pika_logo);
-    app_->canvas().text(80, 92, BOARD_NAME);
-}
-
-void AboutScreen::on_press(input::Button) {
-    // Return back on any button
-    app_->activate_screen(*parent_screen_);
-}
-
-void SettingsScreen::draw() { menu_.draw(); }
-
-void SettingsScreen::on_press(input::Button button) {
-    if (not menu_.on_press(button)) {
-        handle_back(button);
-    }
-}
-
-void SettingsScreen::set_backlight() {
-    int b = (app_->get_backlight() / backlight_step) + 1;
-    if (b > backlight_steps_num) {
-        b = 0;
-    }
-    app_->set_backlight(b * backlight_step);
-}
-
-void MainMenuScreen::draw() { menu_.draw(); }
-
-void MainMenuScreen::on_press(input::Button button) {
-    if (not menu_.on_press(button)) {
-        handle_back(button);
-    }
-}
-
-void HomeScreen::init() {
-    auto peers = app_->peers();
-    for (size_t i = 0; i < peers.size(); ++i) {
-        auto &c = app_->peers()[i];
-        peer_items_[i].name = c.name.data();
-        peer_items_[i].on_activate = [](void *) {};
-    }
-    menu_.set_items({peer_items_.data(), peers.size()});
-    menu_.reset();
-}
-
-void HomeScreen::draw() { menu_.draw(); }
-
-void HomeScreen::on_press(input::Button button) {
-    switch (button) {
-        case input::Button::ptt:
-            record_message_start();
-            return;
-        case input::Button::pwr:
-            main_menu_screen_.init_activate();
-            return;
-        default:
-            break;
-    }
-    menu_.on_press(button);
-}
-
 void App::load_peers() {
     // Static: too big for a thread stack.
     static FIL file;
     static char line[200];
 
-    peers_num_ = 0;
+    peers_.clear();
     FRESULT res = wf_open(&file, "/contacts.txt", FA_READ);
     if (res != FR_OK) {
         LOG("peers: cannot open contacts.txt, error %d", (int) res);
@@ -240,13 +104,12 @@ void App::load_peers() {
         if (text.empty() or text.front() == '#') {
             continue;
         }
-        if (peers_num_ == peers_.size()) {
+        if (peers_.full()) {
             LOG("peers: more than %u, rest ignored", (unsigned) peers_.size());
             break;
         }
-        if (parse_peer(text, peers_[peers_num_])) {
-            peers_num_++;
-        } else {
+        if (not parse_peer(text, *peers_.add())) {
+            peers_.remove_last();
             LOG("peers: line %u malformed, ignored", line_no);
         }
     }
@@ -254,35 +117,7 @@ void App::load_peers() {
         LOG("peers: read error");
     }
     wf_close(&file);
-    LOG("peers: %u loaded", (unsigned) peers_num_);
-}
-
-void HomeScreen::record_message_start() {
-    if (menu_.empty()) {
-        return;
-    }
-    const size_t peer = menu_.cursor();
-    if (app_->start_recording(peer)) {
-        recording_screen_.show(app_->peers()[peer]);
-    }
-}
-
-void RecordingScreen::show(const Peer &peer) {
-    peer_ = &peer;
-    init_activate();
-}
-
-void RecordingScreen::draw() {
-    app_->canvas().text(4, 30, "Recording message:");
-    app_->canvas().text(4, 50, peer_->name.data());
-}
-
-void RecordingScreen::on_release(input::Button button) {
-    if (button != input::Button::ptt) {
-        return;
-    }
-    app_->finish_recording();
-    app_->activate_screen(*parent_screen_);
+    LOG("peers: %u loaded", (unsigned) peers_.size());
 }
 
 void App::main() {
@@ -344,7 +179,7 @@ void App::set_backlight(int brightness) {
 }
 
 bool App::start_recording(size_t peer_index) {
-    if (recording_for_ != nullptr or peer_index >= peers_num_ or not cfg_.recorder->idle()) {
+    if (recording_peer_ != nullptr or peer_index >= peers_.size() or not cfg_.recorder->idle()) {
         return false;
     }
     Peer &peer = peers_[peer_index];
@@ -352,7 +187,7 @@ bool App::start_recording(size_t peer_index) {
     // "/<peer id>/tx/<message id>", creating the directories on the way.
     char *p = msg_path_;
     *p++ = '/';
-    p = put_hex(p, peer.id, 16);
+    p = put_hex(p, peer.addr, 16);
     *p = '\0';
     wf_mkdir(msg_path_);
     p = std::copy_n("/tx", 3, p);
@@ -381,14 +216,14 @@ bool App::start_recording(size_t peer_index) {
         LOG("recording for \"%s\": microphone did not start", peer.name.data());
         return false;
     }
-    recording_for_ = &peer;
+    recording_peer_ = &peer;
     recording_id_ = id;
     LOG("recording %s for \"%s\" started", msg_path_, peer.name.data());
     return true;
 }
 
 void App::finish_recording() {
-    if (recording_for_ == nullptr) {
+    if (recording_peer_ == nullptr) {
         return;
     }
     cfg_.mic->stop_capture();
@@ -402,24 +237,48 @@ void App::finish_recording() {
     const FRESULT res = msg_writer_.result();
     const uint32_t size = cfg_.recorder->bytes();
     LOG("recording %s for \"%s\" finished, %u.%us, %u bytes, %u frames dropped, result %d", msg_path_,
-        recording_for_->name.data(), (unsigned) cfg_.recorder->tenths() / 10U, (unsigned) cfg_.recorder->tenths() % 10U,
-        (unsigned) size, (unsigned) dropped_frames_, (int) res);
+        recording_peer_->name.data(), (unsigned) cfg_.recorder->tenths() / 10U,
+        (unsigned) cfg_.recorder->tenths() % 10U, (unsigned) size, (unsigned) dropped_frames_, (int) res);
 
     if (res == FR_OK) {
-        if (recording_for_->tx_msgs.full()) {
-            LOG("recording: tx queue of \"%s\" full", recording_for_->name.data());
-        } else {
-            recording_for_->tx_msgs.write_span(1)[0] = Message{recording_id_, size};
-            recording_for_->tx_msgs.commit(1);
+        if (recording_peer_->tx_msgs.full()) {
+            recording_peer_->tx_msgs.pop(1);
         }
+        TxMessage &msg = recording_peer_->tx_msgs.write_span(1)[0];
+        msg.id = recording_id_;
+        msg.size = size;
+        msg.flags = 0;
+        recording_peer_->tx_msgs.commit(1);
     }
-    recording_for_ = nullptr;
+    recording_peer_ = nullptr;
 
     // Play it back from the file.
     if (res == FR_OK and wf_open(&replay_file_, msg_path_, FA_READ) == FR_OK) {
         replay_open_ = true;
         cfg_.recorder->replay(*cfg_.speaker, *this);
     }
+}
+
+void App::on_data_frame_sent(Address addr) {
+    Peer *peer = get_peer(addr);
+    if (peer) {
+        send_messages(*peer);
+    }
+}
+
+void App::on_data_frame_received(Address addr, std::span<const uint8_t> frame) {
+    uint8_t msg_type = frame[0];
+    proto::app::dispatch_message(msg_type, messgen::bytes{&frame[1], frame.size() - 1}, [&](auto &&recv_msg) {
+        using ActualType = std::decay_t<decltype(recv_msg)>;
+        using DataType = ActualType::data_type;
+        DataType data;
+        if (recv_msg.deserialize(data)) {
+            Peer *peer = get_peer(addr);
+            if (peer) {
+                on_message(*peer, data);
+            }
+        }
+    });
 }
 
 void App::on_melpe_frame(std::span<const uint8_t> frame) {
@@ -441,6 +300,33 @@ bool App::fill_melpe_frame(std::span<uint8_t> frame) {
     replay_open_ = false;
     return false;
 }
+
+void App::send_messages(Peer &peer) {
+    if (mac().is_busy(peer.addr)) {
+        return;
+    }
+    for (TxMessage &msg: peer.tx_msgs) {
+        if (msg.flags & TxMessage::acked) {
+            // Already delivered
+            continue;
+        }
+        if (not(msg.flags & TxMessage::notified)) {
+            // Not notified yet
+            types::app::message_new msg_new;
+            msg_new.id = peer.addr;
+            msg_new.size = msg.size;
+            msg_new.msg_type = types::app::message_type::voice;
+            mac().send_data_frame(peer.addr, proto::app::message_new::send(&msg_new));
+            break;
+        }
+    }
+}
+
+void App::on_message(Peer &peer, const types::app::message_new &msg_new) {}
+
+void App::on_message(Peer &peer, const types::app::message_get &msg_get) {}
+
+void App::on_message(Peer &peer, const types::app::message_data &msg_data) {}
 
 void App::beep(float freq_hz, float duration_s) {
     audio::DACSpeaker &spk = *cfg_.speaker;

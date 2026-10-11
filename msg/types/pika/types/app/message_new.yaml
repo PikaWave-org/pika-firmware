@@ -1,0 +1,6 @@
+type_class: struct
+comment: "Notification about new message."
+fields:
+  - { name: "id", type: "uint32", comment: "Message ID" }
+  - { name: "size", type: "uint32", comment: "Message size in bytes" }
+  - { name: "msg_type", type: "message_type", comment: "Message type" }

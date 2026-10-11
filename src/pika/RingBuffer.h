@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
+#include <iterator>
 #include <span>
 
 namespace pika {
@@ -37,6 +39,64 @@ public:
     // fewer if the ring wraps first. Valid until pop(); call again for the
     // rest.
     std::span<T> read_span(size_t n) { return {&data_[r_], std::min({n, size(), SIZE - r_})}; }
+
+    T &get(size_t idx) {
+        size_t i = r_ + idx;
+        if (i >= SIZE) {
+            i -= SIZE;
+        }
+        return data_[i];
+    }
+
+    // Reader: the queued elements, oldest first. begin() takes the count, so
+    // elements the writer adds meanwhile are not visited.
+    template<class V>
+    class Iterator {
+    public:
+        using iterator_category = std::forward_iterator_tag;
+        using value_type = T;
+        using difference_type = std::ptrdiff_t;
+        using pointer = V *;
+        using reference = V &;
+
+        Iterator() = default;
+
+        Iterator(V *data, size_t pos, size_t left) : data_(data), pos_(pos), left_(left) {}
+
+        reference operator*() const { return data_[pos_]; }
+
+        pointer operator->() const { return &data_[pos_]; }
+
+        Iterator &operator++() {
+            advance(pos_, 1U);
+            left_--;
+            return *this;
+        }
+
+        Iterator operator++(int) {
+            Iterator prev = *this;
+            ++*this;
+            return prev;
+        }
+
+        bool operator==(const Iterator &other) const { return left_ == other.left_; }
+
+    private:
+        V *data_{};
+        size_t pos_{};
+        size_t left_{};
+    };
+
+    using iterator = Iterator<T>;
+    using const_iterator = Iterator<const T>;
+
+    iterator begin() { return {data_, r_, size()}; }
+
+    iterator end() { return {data_, r_, 0U}; }
+
+    const_iterator begin() const { return {data_, r_, size()}; }
+
+    const_iterator end() const { return {data_, r_, 0U}; }
 
     void pop(size_t n) {
         advance(r_, n);

@@ -1,0 +1,6 @@
+type_class: struct
+comment: "Message data, as requested in message_get."
+fields:
+  - { name: "id", type: "uint32", comment: "Message ID" }
+  - { name: "offset", type: "uint32", comment: "Data chunk offset" }
+  - { name: "size", type: "uint32", comment: "Data chunk size" }

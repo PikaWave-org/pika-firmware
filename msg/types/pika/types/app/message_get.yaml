@@ -1,0 +1,5 @@
+type_class: struct
+comment: "Request to get a part of the message, from receiver to sender."
+fields:
+  - { name: "id", type: "uint32", comment: "Message ID" }
+  - { name: "offset", type: "uint32", comment: "Data chunk offset, equal to message size to ack receiving of the full message" }

@@ -1,0 +1,6 @@
+proto_id: 2
+comment: "Application level protocol."
+messages:
+  0: { name: "message_new", type: "pika/types/app/message_new", comment: "Notification about new message." }
+  1: { name: "message_get", type: "pika/types/app/message_get", comment: "Request to get a part of the message, from receiver to sender." }
+  2: { name: "message_data", type: "pika/types/app/message_data", comment: "Message data, as requested in message_get." }

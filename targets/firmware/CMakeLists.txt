@@ -31,4 +31,4 @@ target_compile_definitions(firmware.elf PRIVATE CHPRINTF_USE_FLOAT=TRUE)
 pika_add_sound(firmware.elf SOUND "${PROJECT_ROOT}/sounds/meow.mp3")
 pika_add_image(firmware.elf IMAGE "${PROJECT_ROOT}/images/pika_logo.bmp")
 
-target_link_libraries(firmware.elf PRIVATE msgs_types msgs_proto_mac m)
+target_link_libraries(firmware.elf PRIVATE msgs_types msgs_proto_mac msgs_proto_app m)
