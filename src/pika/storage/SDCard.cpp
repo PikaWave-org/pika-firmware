@@ -3,6 +3,8 @@
 
 #include "SDCard.h"
 
+#include <pika/fatfs_wrapper/fatfsWrapper.h>
+
 namespace pika::storage {
 namespace {
 
@@ -26,7 +28,7 @@ bool SDCard::mount() {
         last_error_ = FR_NOT_READY;
         return false;
     }
-    last_error_ = f_mount(&fs_, "", 1);
+    last_error_ = wf_mount(&fs_, "", 1);
     if (last_error_ != FR_OK) {
         sdcDisconnect(&SDCD1);
         return false;
@@ -37,7 +39,7 @@ bool SDCard::mount() {
 
 void SDCard::unmount() {
     if (mounted_) {
-        f_mount(nullptr, "", 0);
+        wf_mount(nullptr, "", 0);
         mounted_ = false;
     }
     if (started_) {
@@ -58,7 +60,7 @@ uint32_t SDCard::free_mb() {
     }
     DWORD clusters;
     FATFS *fs;
-    if (f_getfree("", &clusters, &fs) != FR_OK) {
+    if (wf_getfree("", &clusters, &fs) != FR_OK) {
         return 0;
     }
     return sectors_to_mb(clusters * fs->csize);

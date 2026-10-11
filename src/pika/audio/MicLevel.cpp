@@ -7,7 +7,7 @@
 namespace pika::audio {
 
 // Runs in the DMA interrupt: arithmetic only, no logging and no blocking.
-void MicLevel::take_audio_buffer(std::span<const int16_t> buf) {
+void MicLevel::on_audio_buffer(std::span<const int16_t> buf) {
     peak_ -= peak_ * DECAY_FACTOR * buf.size();
     for (int16_t s: buf) { peak_ = std::fmaxf(peak_, float(std::abs(s))); }
 }

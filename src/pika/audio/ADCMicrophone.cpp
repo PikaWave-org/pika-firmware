@@ -143,7 +143,7 @@ void ADCMicrophone::fill_cb(std::span<adcsample_t> buf) {
         }
         out[i] = (int16_t) (((int32_t) buf[i] - (int32_t) ADC_VALUE_MID) * agc_gain_);
     }
-    instance_->consumers_.for_each([&](AudioConsumer &consumer) { consumer.take_audio_buffer(out); });
+    instance_->consumers_.for_each([&](AudioConsumer &consumer) { consumer.on_audio_buffer(out); });
 }
 
 void ADCMicrophone::error_cb(ADCDriver *adcp, adcerror_t err) {

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Peer.h"
 #include <pika/MAC.h>
 #include <pika/audio/ADCMicrophone.h>
 #include <pika/audio/DACSpeaker.h>
@@ -9,30 +10,22 @@
 #include <pika/buttons.h>
 #include <pika/gfx/Canvas.h>
 #include <pika/lcd/ST75160.h>
-#include <pika/lcd/images/pika_logo.h>
-#include <pika/log.h>
 #include <pika/power/BQ25895.h>
 #include <pika/power/BatteryStatus.h>
 #include <pika/radio/SX1262.h>
 #include <pika/storage/FileWriter.h>
 
-#include <ch.h>
 #include <ch.hpp>
 #include <hal.h>
 
 #include <cstddef>
 #include <cstdio>
 
-namespace pika {
+namespace pika::app {
 
 class App;
 
-static constexpr size_t CONTACTS_MAX_NUM = 128;
-
-struct Contact {
-    std::array<char, 128> name;
-    std::array<uint8_t, 32> key;
-};
+static constexpr size_t PEERS_MAX_NUM = 64;
 
 class StatusBar {
 public:
@@ -174,7 +167,7 @@ class RecordingScreen : public Screen {
 public:
     RecordingScreen(App &app, Screen *parent_screen) : Screen(app, parent_screen) {}
 
-    void show(const Contact &contact);
+    void show(const Peer &peer);
 
     void draw() override;
 
@@ -183,7 +176,7 @@ public:
     void on_release(input::Button button) override;
 
 private:
-    const Contact *contact_ = nullptr;
+    const Peer *peer_ = nullptr;
 };
 
 class HomeScreen : public Screen {
@@ -202,13 +195,13 @@ private:
     MainMenuScreen main_menu_screen_{*app_, this};
     RecordingScreen recording_screen_{*app_, this};
 
-    std::array<MenuItem, CONTACTS_MAX_NUM> contacts_items_;
-    Menu menu_{*app_, "Contacts", {}, this};
+    std::array<MenuItem, PEERS_MAX_NUM> peer_items_;
+    Menu menu_{*app_, "Peers", {}, this};
 
     void record_message_start();
 };
 
-class App : public chibios_rt::BaseStaticThread<1024> {
+class App : public chibios_rt::BaseStaticThread<1024>, public audio::MELPeSink, public audio::MELPeSource {
 public:
     using Canvas = gfx::Canvas<lcd::ST75160::Framebuffer>;
 
@@ -252,11 +245,12 @@ public:
     // Plays a tone without waiting for it; cuts short whatever is playing.
     void beep(float freq_hz, float duration_s);
 
-    void start_recording(const Contact &contact);
+    // Records a message to /<peer id>/tx/<message id>; false if it could not start.
+    bool start_recording(size_t peer_index);
 
     void finish_recording();
 
-    std::span<const Contact> contacts() const { return {contacts_.data(), contacts_num_}; }
+    std::span<const Peer> peers() const { return {peers_.data(), peers_num_}; }
 
 private:
     Config cfg_;
@@ -271,13 +265,23 @@ private:
     int backlight_brightness_{};
     systime_t backlight_wake_ = 0;
     sysinterval_t backlight_timeout_ = TIME_S2I(5);
-    std::array<Contact, CONTACTS_MAX_NUM> contacts_;
-    size_t contacts_num_ = 0;
+    std::array<Peer, PEERS_MAX_NUM> peers_;
+    size_t peers_num_ = 0;
 
-    // Reads /contacts.txt from the SD card, one "name,key" per line.
-    void load_contacts();
+    // Reads /contacts.txt from the SD card, one "id,name,key" per line.
+    void load_peers();
 
-    const Contact *recording_for_ = nullptr;
+    // Codec thread: the recorded stream to the file, and the file back for replay.
+    void on_melpe_frame(std::span<const uint8_t> frame) override;
+    bool fill_melpe_frame(std::span<uint8_t> frame) override;
+
+    Peer *recording_for_ = nullptr;
+    uint32_t recording_id_ = 0;
+    char msg_path_[32]{};
+    volatile uint32_t dropped_frames_ = 0;
+    FileWriter<2048> msg_writer_;
+    FIL replay_file_{};
+    volatile bool replay_open_ = false;
 };
 
-}// namespace pika
+}// namespace pika::app

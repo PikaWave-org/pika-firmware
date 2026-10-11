@@ -52,7 +52,7 @@ public:
      *          at a time, so it must not block or log. The buffer is valid for
      *          the call and no longer.
      */
-    virtual void take_audio_buffer(std::span<const int16_t> buf) = 0;
+    virtual void on_audio_buffer(std::span<const int16_t> buf) = 0;
 };
 
 }// namespace pika::audio

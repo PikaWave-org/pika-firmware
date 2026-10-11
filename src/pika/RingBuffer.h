@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <cstddef>
 #include <span>
 
 namespace pika {
@@ -60,8 +59,8 @@ private:
     }
 
     T data_[SIZE]{};
-    size_t w_{};// Writer only.
-    size_t r_{};// Reader only.
+    size_t w_{};// Writer index
+    size_t r_{};// Reader index
     std::atomic<size_t> size_{};
 };
 

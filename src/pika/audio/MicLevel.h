@@ -13,7 +13,7 @@ class MicLevel : public AudioConsumer {
 public:
     MicLevel() {}
 
-    void take_audio_buffer(std::span<const int16_t> buf) override;
+    void on_audio_buffer(std::span<const int16_t> buf) override;
 
     /** @brief  Peak with slow decay, in dB. */
     [[nodiscard]] float peak_db() const { return to_db(peak_); }

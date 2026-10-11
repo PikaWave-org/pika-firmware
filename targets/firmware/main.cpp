@@ -6,8 +6,8 @@
 #include <algorithm>
 #include <cmath>
 
-#include <pika/App.h>
 #include <pika/MAC.h>
+#include <pika/app/App.h>
 #include <pika/audio/ADCMicrophone.h>
 #include <pika/audio/DACSpeaker.h>
 #include <pika/audio/MELPeRecorder.h>
@@ -16,6 +16,7 @@
 #include <pika/audio/sounds/meow.h>
 #include <pika/audio/tone_generator.h>
 #include <pika/buttons.h>
+#include <pika/fatfs_wrapper/fatfsWrapper.h>
 #include <pika/lcd/ST75160.h>
 #include <pika/lcd/images/pika_logo.h>
 #include <pika/log.h>
@@ -99,7 +100,7 @@ static constexpr size_t radio_payload_len = 128U;
 
 static pika::MAC mac{&radio};
 
-static const pika::App::Config app_cfg = {.display = &display,
+static const pika::app::App::Config app_cfg = {.display = &display,
                                           .speaker = &spk,
                                           .mic = &mic,
                                           .recorder = &melp_rec,
@@ -109,7 +110,7 @@ static const pika::App::Config app_cfg = {.display = &display,
                                           .backlight_pwm = &BOARD_LCD_BKLT_PWM,
                                           .backlight_ch = BOARD_LCD_BKLT_PWM_CHANNEL};
 
-static pika::App app{app_cfg};
+static pika::app::App app{app_cfg};
 
 static pika::usb::TinyUSBTask usb;
 
@@ -118,6 +119,10 @@ static pika::storage::SDCard sd;
 int main() {
     halInit();
     chSysInit();
+
+    // Every FatFS call runs on this thread; above all its callers, as messages
+    // do not inherit priority.
+    wf_init(NORMALPRIO + 2);
 
     rccEnableUSB1_OTG_HS(true);
     rccEnableUSB1_HSULPI(true);

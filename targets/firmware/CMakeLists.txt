@@ -4,6 +4,7 @@ pika_add_firmware(firmware
         SOURCES
                 main.cpp
                 ${PIKA_LOG_SOURCES}
+                ${PIKA_CORE_SOURCES}
                 ${PIKA_APP_SOURCES}
                 ${PIKA_AUDIO_SOURCES}
                 ${PIKA_LCD_SOURCES}
@@ -11,6 +12,7 @@ pika_add_firmware(firmware
                 ${PIKA_USB_SOURCES}
                 ${PIKA_RADIO_SOURCES}
                 ${PIKA_STORAGE_SOURCES}
+                ${PIKA_FATFS_WRAPPER_SOURCES}
                 ${MELPE_SOURCES}
                 ${TINYUSB_SOURCES})
 
