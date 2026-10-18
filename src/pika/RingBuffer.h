@@ -8,16 +8,15 @@
 
 namespace pika {
 
-// Single producer, single consumer ring, lock free: one context writes, one
-// reads, each a thread or an interrupt. Each side owns its index; the shared
-// element count is atomic, and its release/acquire orders the elements.
-template<class T, size_t SIZE>
+// Ring buffer of SIZE elements, not thread safe: use it from one context, or
+// ConcurrentRingBuffer between a writer and a reader in different contexts.
+// COUNT is the element count's type, which is all the two differ in.
+template<class T, size_t SIZE, class COUNT = size_t>
 class RingBuffer {
     static_assert(SIZE > 0U, "SIZE must not be 0");
-    static_assert(std::atomic<size_t>::is_always_lock_free, "the count must be lock free");
 
 public:
-    size_t size() const { return size_.load(std::memory_order_acquire); }
+    size_t size() const { return load(size_); }
 
     size_t free() const { return SIZE - size(); }
 
@@ -32,7 +31,7 @@ public:
 
     void commit(size_t n) {
         advance(w_, n);
-        size_.fetch_add(n, std::memory_order_release);
+        add(size_, n);
     }
 
     // Reader: up to n queued elements at the read position, contiguous, so
@@ -100,17 +99,31 @@ public:
 
     void pop(size_t n) {
         advance(r_, n);
-        size_.fetch_sub(n, std::memory_order_release);
+        sub(size_, n);
     }
 
     // Empties the ring; only while neither side runs.
     void reset() {
         w_ = 0U;
         r_ = 0U;
-        size_.store(0U, std::memory_order_relaxed);
+        size_ = 0U;
     }
 
 private:
+    static size_t load(const size_t &count) { return count; }
+
+    static void add(size_t &count, size_t n) { count += n; }
+
+    static void sub(size_t &count, size_t n) { count -= n; }
+
+    // ConcurrentRingBuffer: the release/acquire on the count orders the
+    // elements written before it against the ones read after it.
+    static size_t load(const std::atomic<size_t> &count) { return count.load(std::memory_order_acquire); }
+
+    static void add(std::atomic<size_t> &count, size_t n) { count.fetch_add(n, std::memory_order_release); }
+
+    static void sub(std::atomic<size_t> &count, size_t n) { count.fetch_sub(n, std::memory_order_release); }
+
     static void advance(size_t &i, size_t n) {
         i += n;
         if (i >= SIZE) {
@@ -121,7 +134,15 @@ private:
     T data_[SIZE]{};
     size_t w_{};// Writer index
     size_t r_{};// Reader index
-    std::atomic<size_t> size_{};
+    COUNT size_{};
+};
+
+// Single producer, single consumer ring, lock free: one context writes
+// (write_span, commit), another reads (read_span, get, iterators, pop), each a
+// thread or an interrupt. Each side owns its index; the shared count is atomic.
+template<class T, size_t SIZE>
+class ConcurrentRingBuffer : public RingBuffer<T, SIZE, std::atomic<size_t>> {
+    static_assert(std::atomic<size_t>::is_always_lock_free, "the count must be lock free");
 };
 
 }// namespace pika

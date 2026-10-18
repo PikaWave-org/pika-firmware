@@ -26,7 +26,10 @@
 
 namespace pika::app {
 
-class App : public chibios_rt::BaseStaticThread<1024>, public audio::MELPeSink, public audio::MELPeSource, public FrameHandler {
+class App : public chibios_rt::BaseStaticThread<1024>,
+            public audio::MELPeSink,
+            public audio::MELPeSource,
+            public FrameHandler {
 public:
     using Canvas = gfx::Canvas<lcd::ST75160::Framebuffer>;
 
@@ -42,7 +45,9 @@ public:
         pwmchannel_t backlight_ch;
     };
 
-    explicit App(const Config &cfg) : cfg_(cfg), canvas_(cfg.display->framebuffer()), buttons_(cfg.buttons) {}
+    explicit App(const Config &cfg) : cfg_(cfg), canvas_(cfg.display->framebuffer()), buttons_(cfg.buttons) {
+        chEvtObjectInit(&frame_event_src_);
+    }
 
     void main() override;
 
@@ -56,6 +61,8 @@ public:
     }
 
     Canvas &canvas() { return canvas_; }
+
+    bool is_active(const Screen &screen) const { return active_screen_ == &screen; }
 
     MAC<radio::SX1262> &mac() { return *cfg_.mac; }
 
@@ -75,7 +82,13 @@ public:
 
     void finish_recording();
 
+    // Plays the newest fully received message from the peer; false if there
+    // is none or it could not start.
+    bool play_last_message(size_t peer_index);
+
     std::span<Peer> peers() { return std::span(peers_); }
+
+    const Identity &self() const { return self_; }
 
     Peer *get_peer(Address addr) {
         for (auto &peer: peers_) {
@@ -86,10 +99,13 @@ public:
         return nullptr;
     }
 
+    // MAC thread: queued for handle_frame_events().
     void on_data_frame_sent(Address addr) override;
     void on_data_frame_received(Address addr, std::span<const uint8_t> frame) override;
+    void on_peer_updated(Address addr, float rssi) override;
 
 private:
+    static constexpr Time RETRANSMIT_DELAY = 700 * MILLISECOND;
     Config cfg_;
     Canvas canvas_;
     input::Buttons buttons_;
@@ -101,13 +117,19 @@ private:
     Screen *active_screen_{&home_screen_};
     int backlight_brightness_{};
     systime_t backlight_wake_ = 0;
-    sysinterval_t backlight_timeout_ = TIME_S2I(5);
+    sysinterval_t backlight_timeout_ = TIME_S2I(10);
     FixedVector<Peer, PEERS_MAX_NUM> peers_;
 
     // Reads /contacts.txt from the SD card, one "id,name,key" per line.
     void load_peers();
 
-    // Codec thread: the recorded stream to the file, and the file back for replay.
+    // Reads our own entry from /id.txt, "id,name,key" like a peer, and sets
+    // the address in the MAC.
+    void load_identity();
+
+    Identity self_{};
+
+    // Codec thread: the recorded stream to the file, and a received message from its file for replay.
     void on_melpe_frame(std::span<const uint8_t> frame) override;
     bool fill_melpe_frame(std::span<uint8_t> frame) override;
 
@@ -121,7 +143,60 @@ private:
 
     FixedVector<uint8_t, 256> tx_buf_;
 
+    // A FrameHandler call, copied, as the received frame is only valid during the call.
+    struct FrameEvent {
+        enum Kind : uint8_t { sent, received, peer_updated };
+
+        static const char *name(Kind kind) {
+            switch (kind) {
+                case sent:
+                    return "sent";
+                case received:
+                    return "received";
+                case peer_updated:
+                    return "peer updated";
+            }
+            return "?";
+        }
+
+        Kind kind{};
+        Address addr{};
+        FixedVector<uint8_t, 256> frame;
+    };
+
+    // Written by the MAC thread, read by the App thread.
+    ConcurrentRingBuffer<FrameEvent, 8> frame_events_;
+    event_source_t frame_event_src_;
+
+    void post_frame_event(FrameEvent::Kind kind, Address addr, std::span<const uint8_t> frame);
+
+    void handle_frame_events();
+
     void send_messages(Peer &peer);
+
+    // Reads size bytes at offset of /<peer id>/tx/<message id> into buf; false
+    // if the file is missing or shorter.
+    bool read_message(Address peer_addr, uint32_t msg_id, uint32_t offset, size_t size, FixedVector<uint8_t, 256> &buf);
+
+    // Writes data at offset of /<peer id>/rx/<message id>; offset 0 creates
+    // the file, and the directories on the way.
+    bool write_message(Address peer_addr, uint32_t msg_id, uint32_t offset, std::span<const uint8_t> data);
+
+    // Asks the peer for the message from size_received on; at the end, that
+    // acks the whole message.
+    void request_message(Peer &peer, RxMessage &msg);
+
+    // Plays /<peer id>/rx/<message id>, unless the codec is busy.
+    bool play_message(const Peer &peer, const RxMessage &msg);
+
+    // A replay started by play_message() and not yet finished.
+    bool replaying_ = false;
+
+    // Beeps once a replay has played out.
+    void on_recorder_idle();
+
+    // App thread: one message chunk read or written at a time.
+    FIL msg_file_{};
 
     void handle_message(Peer &peer, std::span<const uint8_t> data);
 

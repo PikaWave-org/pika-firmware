@@ -12,4 +12,6 @@ static constexpr size_t SECOND = 1000 * MILLISECOND;
 
 inline Time now() { return (int64_t) chVTGetSystemTime() * (1000000 / CH_CFG_ST_FREQUENCY); }
 
+inline systime_t time_to_systime(Time &t) { return t / (1000000 / CH_CFG_ST_FREQUENCY); }
+
 }// namespace pika

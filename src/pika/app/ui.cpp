@@ -7,8 +7,15 @@
 
 #include "chprintf.h"
 
-namespace pika::app {
+#include <cstring>
 
+namespace pika::app {
+namespace {
+
+// A filled dot.
+constexpr uint8_t online_icon[8] = {0x00, 0x3C, 0x7E, 0x7E, 0x7E, 0x7E, 0x3C, 0x00};
+
+}// namespace
 
 void StatusBar::draw() {
     app_->canvas().rect<false>(0, 0, 160, status_bar_h);
@@ -16,6 +23,19 @@ void StatusBar::draw() {
     chsnprintf(buf, sizeof(buf), "%s %.2f", app_->battery_status().charging != Charge::off ? "CHG" : "   ",
                app_->battery_status().voltage / 1000.0f);
     app_->canvas().text<true>(2, 0, buf);
+
+    const bool tx = app_->mac().tx_state() == RadioState::tx;
+    app_->canvas().rect<false>(160 - 2 - 2 * 8, 0, 16, 8);
+    switch (app_->mac().tx_state()) {
+        case RadioState::tx:
+            app_->canvas().text<true>(160 - 2 - 1 * 8, 0, "T");
+            break;
+        case RadioState::rx:
+            app_->canvas().text<true>(160 - 2 - 2 * 8, 0, "R");
+            break;
+        default:
+            break;
+    }
 }
 
 bool Screen::handle_back(input::Button button) {
@@ -30,10 +50,26 @@ void Menu::draw() {
     app_->canvas().rect<true>(0, title_y, 160, title_h);
     app_->canvas().text<false>(2, title_y + 2, title_);
 
-    for (size_t i = 0; i < items_.size(); i++) {
-        app_->canvas().text(label_x, (int) i * row_h + items_y, items_[i].name);
-    }
+    for (size_t i = 0; i < items_.size(); i++) { draw_item(i); }
     draw_cursor(true);
+}
+
+void Menu::draw_item(size_t i) {
+    const int y = (int) i * row_h + items_y;
+    app_->canvas().rect<false>(label_x, y, 160 - label_x, row_h);
+    app_->canvas().text(label_x, y, items_[i].name);
+    // The value and the icon go over the name, so a long one ends where they
+    // start; the icon's place is kept even without one.
+    if (items_[i].value != nullptr) {
+        const int w = 8 * (int) strlen(items_[i].value);
+        const int x = icon_x - 2 - w;
+        app_->canvas().rect<false>(x - 2, y, w + 4, icon_size);
+        app_->canvas().text(x, y, items_[i].value);
+    }
+    app_->canvas().rect<false>(icon_x, y, icon_size, icon_size);
+    if (items_[i].icon != nullptr) {
+        app_->canvas().bitmap(icon_x, y, icon_size, icon_size, items_[i].icon);
+    }
 }
 
 void Menu::draw_cursor(bool on) {
@@ -123,6 +159,7 @@ void HomeScreen::init() {
         auto &c = app_->peers()[i];
         peer_items_[i].name = c.name.data();
         peer_items_[i].on_activate = [](void *) {};
+        update_item(i);
     }
     menu_.set_items({peer_items_.data(), peers.size()});
     menu_.reset();
@@ -135,6 +172,11 @@ void HomeScreen::on_press(input::Button button) {
         case input::Button::ptt:
             record_message_start();
             return;
+        case input::Button::lsn:
+            if (not menu_.empty()) {
+                app_->play_last_message(menu_.cursor());
+            }
+            return;
         case input::Button::pwr:
             main_menu_screen_.init_activate();
             return;
@@ -142,6 +184,41 @@ void HomeScreen::on_press(input::Button button) {
             break;
     }
     menu_.on_press(button);
+}
+
+void HomeScreen::on_peer_updated(Address peer_addr) {
+    auto peers = app_->peers();
+    for (size_t i = 0; i < peers.size(); ++i) {
+        if (peers[i].addr != peer_addr) {
+            continue;
+        }
+        update_item(i);
+        // Otherwise drawn with the rest when this screen is shown again.
+        if (app_->is_active(*this)) {
+            menu_.draw_item(i);
+        }
+    }
+}
+
+void HomeScreen::update_item(size_t i) {
+    const Peer &peer = app_->peers()[i];
+    peer_items_[i].icon = app_->mac().is_online(peer.addr) ? online_icon : nullptr;
+    bool tx_pending = false;
+    for (auto &tx_msg: peer.tx_msgs) {
+        if (not(tx_msg.flags & TxMessage::acked)) {
+            tx_pending = true;
+        }
+    }
+    bool rx_pending = false;
+    for (auto &rx_msg: peer.rx_msgs) {
+        if (rx_msg.size_received < rx_msg.size) {
+            rx_pending = true;
+        }
+    }
+
+    chsnprintf(peer_counts_[i].data(), peer_counts_[i].size(), "%i %c%c", int(peer.rssi), tx_pending ? 'T' : ' ',
+               rx_pending ? 'R' : ' ');
+    peer_items_[i].value = peer_counts_[i].data();
 }
 
 void HomeScreen::record_message_start() {

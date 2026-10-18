@@ -29,9 +29,8 @@ public:
 
     /**
          * Init driver
-         * @param payload_len payload length, > 0 for fixed length, 0 for variable length
          */
-    void init(size_t payload_len);
+    void init();
 
     /**
          * Set center frequency in Hz
@@ -51,11 +50,13 @@ public:
          */
     void set_power(float power);
 
-    void tx(std::span<const uint8_t> data);
+    void tx(std::span<const uint8_t> data, const Time &send_at);
 
-    std::span<const uint8_t> rx(systime_t &timestamp, systime_t end_time);
+    std::span<const uint8_t> rx(Time &rx_timestamp, const Time &end_time);
 
     RadioStats get_stats() const;
+
+    void print_status();
 
     uint64_t freq() const { return _freq; }
 
@@ -63,8 +64,18 @@ public:
 
 private:
     static constexpr uint32_t F_XTAL = 32000000;
-    static constexpr double F_STEP = (double) F_XTAL / (1 << 25);
     static constexpr size_t FIFO_SIZE = 256;
+
+    struct CalibrationBand {
+        uint64_t above;
+        uint8_t freq1;
+        uint8_t freq2;
+    };
+
+    static constexpr CalibrationBand calibration_bands[] = {
+            {900000000, 0xE1, 0xE9}, {850000000, 0xD7, 0xDB}, {770000000, 0xC1, 0xC5},
+            {460000000, 0x75, 0x81}, {425000000, 0x6B, 0x6F},
+    };
 
     SPIDriver &_spi;
     ioline_t _gpio_reset;
@@ -80,7 +91,6 @@ private:
     // bytes. Static because the section is shared and there is one radio.
     static std::array<uint8_t, FIFO_SIZE + 3> _spi_buf;
     size_t _spi_buf_size = 0;
-    size_t _payload_len = 0;
     uint64_t _freq = 868000000;
     uint8_t _sf = 9;// Spreading Factor
     uint8_t _bw = 5;// Bandwidth, see get_bw_hz()
@@ -102,6 +112,10 @@ private:
     void write_buffer(std::span<const uint8_t> data);
 
     std::span<uint8_t> read_buffer(size_t n);
+
+    uint8_t get_payload_length_rx();
+
+    void set_packet_params(uint8_t payload_len);
 
     void do_set_freq();
 

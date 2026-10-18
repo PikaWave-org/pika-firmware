@@ -28,6 +28,10 @@ private:
 struct MenuItem {
     const char *name;
     void (*on_activate)(void *screen) = nullptr;
+    // 8x8, drawn at the right end of the row; none if null.
+    const uint8_t *icon = nullptr;
+    // Short text right-aligned before the icon; none if null.
+    const char *value = nullptr;
 };
 
 // A titled list of items with a cursor; activating an item calls it with owner.
@@ -46,6 +50,9 @@ public:
 
     void draw();
 
+    // Redraws one row, after its item changed.
+    void draw_item(size_t i);
+
     // Up, down and right; returns false for any other button.
     bool on_press(input::Button button);
 
@@ -55,6 +62,8 @@ private:
     static constexpr int title_h = 11;
     static constexpr int title_y = StatusBar::status_bar_h;
     static constexpr int items_y = title_y + title_h + 1;
+    static constexpr int icon_size = 8;
+    static constexpr int icon_x = 160 - 2 - icon_size;
 
     App *app_;
     const char *title_;
@@ -177,14 +186,21 @@ public:
 
     void on_press(input::Button button) override;
 
+    // Shows the peer's online state and message counts as they are now.
+    void on_peer_updated(Address peer_addr);
+
 private:
     MainMenuScreen main_menu_screen_{*app_, this};
     RecordingScreen recording_screen_{*app_, this};
 
     std::array<MenuItem, PEERS_MAX_NUM> peer_items_;
+    // "R<rx> T<tx>", the value of each peer's item.
+    std::array<std::array<char, 12>, PEERS_MAX_NUM> peer_counts_{};
     Menu menu_{*app_, "Peers", {}, this};
 
     void record_message_start();
+
+    void update_item(size_t i);
 };
 
 }// namespace pika::app

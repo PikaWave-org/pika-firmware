@@ -89,26 +89,24 @@ static const SPIConfig radio_spi_cfg = {
         .error_cb = nullptr,
         .ssport = PAL_PORT(LINE_RADIO_SPI_NSS),
         .sspad = PAL_PAD(LINE_RADIO_SPI_NSS),
-        .cfg1 = SPI_CFG1_MBR_0 | (7U << SPI_CFG1_DSIZE_Pos),
+        .cfg1 = SPI_CFG1_MBR_1 | (7U << SPI_CFG1_DSIZE_Pos),
         .cfg2 = 0U,
 };
 
 static pika::radio::SX1262 radio{BOARD_RADIO_SPI, LINE_RADIO_RST,  LINE_RADIO_BUSY,
                                  LINE_RADIO_DIO1, LINE_RADIO_TXEN, LINE_RADIO_RXEN};
 
-static constexpr size_t radio_payload_len = 128U;
-
 static pika::MAC mac{&radio};
 
 static const pika::app::App::Config app_cfg = {.display = &display,
-                                          .speaker = &spk,
-                                          .mic = &mic,
-                                          .recorder = &melp_rec,
-                                          .buttons = btn_cfg,
-                                          .mac = &mac,
-                                          .charger = &charger,
-                                          .backlight_pwm = &BOARD_LCD_BKLT_PWM,
-                                          .backlight_ch = BOARD_LCD_BKLT_PWM_CHANNEL};
+                                               .speaker = &spk,
+                                               .mic = &mic,
+                                               .recorder = &melp_rec,
+                                               .buttons = btn_cfg,
+                                               .mac = &mac,
+                                               .charger = &charger,
+                                               .backlight_pwm = &BOARD_LCD_BKLT_PWM,
+                                               .backlight_ch = BOARD_LCD_BKLT_PWM_CHANNEL};
 
 static pika::app::App app{app_cfg};
 
@@ -159,12 +157,10 @@ int main() {
 
     spiStart(&BOARD_RADIO_SPI, &radio_spi_cfg);
     LOG("radio: init");
-    radio.set_mod_params(9, 5, 5);
-    radio.set_power(10.0f);
-    radio.init(radio_payload_len);
+    radio.set_mod_params(5, 5, 4);
+    radio.set_power(20.0f);
+    radio.init();
     LOG("radio: init done");
-
-    mac.start(HIGHPRIO);
 
     // Before USB: without a cable its init never returns.
     if (sd.mount()) {
@@ -174,11 +170,11 @@ int main() {
     }
 
     app.init();
+    // After app.init(), which sets our address from the SD card.
+    mac.start(HIGHPRIO);
     app.start(NORMALPRIO);
 
     // usb.start(HIGHPRIO);
 
-    while (true) {
-        chThdSleepMilliseconds(1000);
-    }
+    while (true) { chThdSleepMilliseconds(1000); }
 }

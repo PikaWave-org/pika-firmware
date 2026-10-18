@@ -42,6 +42,7 @@ bool MELPeRecorder::wait_idle(sysinterval_t timeout) {
 void MELPeRecorder::set_idle() {
     chSysLock();
     mode_ = mode_idle;
+    chEvtBroadcastFlagsI(&idle_events_, 0);
     chThdResumeS(&idle_waiter_, MSG_OK);
     chSysUnlock();
 }

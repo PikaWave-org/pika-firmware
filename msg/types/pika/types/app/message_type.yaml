@@ -2,6 +2,7 @@ type_class: enum
 comment: "Notify receiver about new message"
 base_type: uint8
 values:
+  - { name: "none", value: 0, comment: "Special value for removed message" }
   - { name: "text", value: 1, comment: "Text message" }
   - { name: "voice", value: 2, comment: "Voice message" }
   - { name: "location", value: 3, comment: "Location" }

@@ -41,7 +41,12 @@ public:
     static constexpr size_t frame_len = 180U;
     static constexpr size_t frame_bytes = 7U;
 
+    MELPeRecorder() { chEvtObjectInit(&idle_events_); }
+
     chibios_rt::ThreadReference start(tprio_t prio) override;
+
+    // Broadcast each time it goes idle, after a recording or a replay.
+    event_source_t &idle_events() { return idle_events_; }
 
     // Requests, carried out by the codec thread.
     void start_record(MELPeSink &sink);
@@ -94,6 +99,7 @@ private:
     volatile uint8_t mode_{mode_idle};
 
     thread_reference_t idle_waiter_ = nullptr;
+    event_source_t idle_events_;
 
     MELPeSink *melpe_sink_{};
     MELPeSource *melpe_source_{};
@@ -104,7 +110,7 @@ private:
     volatile uint32_t underruns_{};
 
     // PCM at 8kHz between the speaker/microphone and the codec, in either direction.
-    RingBuffer<int16_t, ring_len> pcm_buf_;
+    ConcurrentRingBuffer<int16_t, ring_len> pcm_buf_;
 
     Decimator4 decim_;
     Interpolator4 interp_;

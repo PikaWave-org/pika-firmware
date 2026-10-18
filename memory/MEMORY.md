@@ -15,6 +15,7 @@ design rules in CLAUDE.md instead of here.
 - [Schematics live in a sibling repo](hardware-repo-schematics.md) — where they are, and how to resolve a net to an MCU pin without kicad-cli.
 - [Microphone front end](mic-adc-front-end.md) — PA6 is ADC1_INP3 and EXTSEL 13 is TIM6_TRGO, both confirmed on the bench; why MIC_SHDN is active low; and the ADC3 setting a part without an ADC3 still needs.
 - [MELPe 2400 cost](melpe-2400-cost.md) — 7ms of the 22.5ms frame to encode and 2ms to decode, measured; the DWT unlock without which every timing reads zero; and why a bitstream CRC only compares against the same samples.
+- [SX1262 time on air](sx1262-time-on-air.md) — `tx_duration()` is right to +160us for CR 1..4, CR 5 airs at the 4/5 rate, and `tx()` adds ~11.5ms (a 10ms sleep and per-command busy waits); measured on the bench.
 
 ## Traps that cost a session each
 

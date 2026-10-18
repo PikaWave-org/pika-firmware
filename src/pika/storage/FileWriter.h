@@ -155,7 +155,7 @@ private:
 
     bool idle() const { return not req_open_ and not req_close_ and buf_.empty(); }
 
-    RingBuffer<uint8_t, BUF_SIZE> buf_;
+    ConcurrentRingBuffer<uint8_t, BUF_SIZE> buf_;
     chibios_rt::ThreadReference thread_;
     thread_reference_t waiter_ = nullptr;
 

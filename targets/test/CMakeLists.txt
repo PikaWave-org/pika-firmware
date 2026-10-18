@@ -3,6 +3,7 @@ pika_add_firmware(test
         SOURCES
                 main.cpp
                 ${PIKA_LOG_SOURCES}
+                ${PIKA_RADIO_SOURCES}
                 ${MELPE_SOURCES})
 
 # Third party code: its own options and private include directory on its
