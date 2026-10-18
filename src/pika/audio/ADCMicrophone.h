@@ -106,8 +106,19 @@ private:
     static constexpr unsigned mic_buffer_half_len = 256U;
     static __attribute__((section(".nocache"), aligned(4))) adcsample_t mic_buffer[2U * mic_buffer_half_len];
 
+    // High pass ahead of the AGC, so it levels on voice and not on handling
+    // noise, wind and hum, and the preamp's bias offset goes too. 2nd order
+    // Butterworth, 300Hz at 32kHz, the telephone band's lower edge:
+    //   scipy.signal.butter(2, 300, 'high', fs=32000)
+    // -31dB at 50Hz, -19dB at 100Hz, -3dB at 300Hz, flat above 1kHz.
+    static constexpr float HP_B0 = 0.959203150f;
+    static constexpr float HP_B1 = -1.918406299f;
+    static constexpr float HP_B2 = 0.959203150f;
+    static constexpr float HP_A1 = -1.916741223f;
+    static constexpr float HP_A2 = 0.920071375f;
+
     static constexpr float AGC_W_DOWN = 0.01f;
-    static constexpr float AGC_W_UP = 0.00002f;
+    static constexpr float AGC_W_UP = 0.00005f;
     static constexpr float AGC_TARGET = ADC_VALUE_MID * 0.5f;
     static constexpr float AGC_GAIN_MAX = 1000.0f;
 
@@ -136,6 +147,8 @@ private:
     bool ready_ = false;                // init() succeeded.
     bool running_ = false;
     float agc_gain_ = 1.0f;
+    float hp_z1_ = 0.0f;// High pass state, transposed direct form II.
+    float hp_z2_ = 0.0f;
 };
 
 }// namespace pika::audio

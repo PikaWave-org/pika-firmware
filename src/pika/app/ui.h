@@ -28,9 +28,11 @@ private:
 struct MenuItem {
     const char *name;
     void (*on_activate)(void *screen) = nullptr;
-    // 8x8, drawn at the right end of the row; none if null.
+    // At the right end of the row: signal bars, 0..4 of them lit, or else an
+    // 8x8 icon; neither if bars < 0 and icon is null.
+    int8_t bars = -1;
     const uint8_t *icon = nullptr;
-    // Short text right-aligned before the icon; none if null.
+    // Short text right-aligned before them; none if null.
     const char *value = nullptr;
 };
 
@@ -62,8 +64,10 @@ private:
     static constexpr int title_h = 11;
     static constexpr int title_y = StatusBar::status_bar_h;
     static constexpr int items_y = title_y + title_h + 1;
+    // The slot at the row's right end: four 2px bars with 1px between.
+    static constexpr int slot_w = 4 * 2 + 3;
+    static constexpr int slot_x = 160 - 2 - slot_w;
     static constexpr int icon_size = 8;
-    static constexpr int icon_x = 160 - 2 - icon_size;
 
     App *app_;
     const char *title_;
@@ -72,6 +76,8 @@ private:
     int cursor_ = 0;
 
     void draw_cursor(bool on);
+
+    void draw_bars(int y, int lit);
 
     void move_cursor(int cursor);
 };
@@ -186,21 +192,24 @@ public:
 
     void on_press(input::Button button) override;
 
-    // Shows the peer's online state and message counts as they are now.
-    void on_peer_updated(Address peer_addr);
+    // Shows the peer's online state, signal level and pending messages as
+    // they are now.
+    void on_peer_updated(const Peer &peer);
 
 private:
     MainMenuScreen main_menu_screen_{*app_, this};
     RecordingScreen recording_screen_{*app_, this};
 
     std::array<MenuItem, PEERS_MAX_NUM> peer_items_;
-    // "R<rx> T<tx>", the value of each peer's item.
-    std::array<std::array<char, 12>, PEERS_MAX_NUM> peer_counts_{};
+    // Each peer item's value: "<snr> TR", T while sending a message, R while receiving
+    std::array<std::array<char, 12>, PEERS_MAX_NUM> peer_status_{};
     Menu menu_{*app_, "Peers", {}, this};
 
     void record_message_start();
 
-    void update_item(size_t i);
+    // Sets the peer's row from its state, without drawing it: init() runs
+    // before the menu has its items. Returns the row.
+    size_t update_peer_item(const Peer &peer);
 };
 
 }// namespace pika::app

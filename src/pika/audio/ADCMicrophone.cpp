@@ -1,7 +1,9 @@
 #include "ADCMicrophone.h"
 
-#include <cmath>
 #include <pika/log.h>
+
+#include <algorithm>
+#include <cmath>
 
 namespace pika::audio {
 
@@ -67,6 +69,8 @@ bool ADCMicrophone::start_capture() {
     chThdSleepMilliseconds(cfg_.settle_ms);
 
     running_ = true;
+    hp_z1_ = 0.0f;
+    hp_z2_ = 0.0f;
     adcStartConversion(cfg_.adc, &adc_grp_, mic_buffer, 2U * mic_buffer_half_len);
 
     if (cfg_.adc->state != ADC_ACTIVE) {
@@ -125,11 +129,15 @@ void ADCMicrophone::fill_cb_static(ADCDriver *adcp) {
     instance_->fill_cb({half, mic_buffer_half_len});
 }
 
-// Raw codes to signed full scale, in place.
+// Raw codes to signed full scale, high passed and levelled, in place.
 void ADCMicrophone::fill_cb(std::span<adcsample_t> buf) {
     std::span<int16_t> out{reinterpret_cast<int16_t *>(buf.data()), buf.size()};
     for (size_t i = 0; i < buf.size(); i++) {
-        float v = float((int32_t) buf[i] - (int32_t) ADC_VALUE_MID);
+        const float x = float((int32_t) buf[i] - (int32_t) ADC_VALUE_MID);
+        const float v = HP_B0 * x + hp_z1_;
+        hp_z1_ = HP_B1 * x - HP_A1 * v + hp_z2_;
+        hp_z2_ = HP_B2 * x - HP_A2 * v;
+
         float v_abs = std::fabs(v);
         float v_abs_gained = v_abs * agc_gain_;
         if (v_abs_gained >= ADC_VALUE_MID) {
@@ -141,7 +149,8 @@ void ADCMicrophone::fill_cb(std::span<adcsample_t> buf) {
             float w = gain_err > 1.0f ? AGC_W_DOWN : AGC_W_UP;
             agc_gain_ = std::fminf(AGC_GAIN_MAX, agc_gain_ * (1.0f + (1.0f - gain_err) * w));
         }
-        out[i] = (int16_t) (((int32_t) buf[i] - (int32_t) ADC_VALUE_MID) * agc_gain_);
+        // Clamped: the filter can overshoot full scale on a steep edge.
+        out[i] = (int16_t) std::clamp(v * agc_gain_, -32768.0f, 32767.0f);
     }
     instance_->consumers_.for_each([&](AudioConsumer &consumer) { consumer.on_audio_buffer(out); });
 }

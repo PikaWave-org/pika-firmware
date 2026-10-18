@@ -359,7 +359,8 @@ void SX1262::get_packet_status() {
     spiSelect(&_spi);
     spiExchange(&_spi, 5, _spi_buf.data(), _spi_buf.data());
     spiUnselect(&_spi);
-    _rssi_packet_i = _spi_buf[4];
+    _rssi_packet_i = _spi_buf[2];
+    _snr_packet_i = _spi_buf[3];
 }
 
 void SX1262::get_rssi_inst() {
@@ -374,8 +375,9 @@ void SX1262::get_rssi_inst() {
 
 RadioStats SX1262::get_stats() const {
     RadioStats stats{
-            .signal_level = -(float) _rssi_packet_i / 2,
-            .noise_level = -(float) _rssi_floor_i / 2,
+            .snr_packet = (float) _snr_packet_i * 0.25f,
+            .rssi_packet = -(float) _rssi_packet_i * 0.5f,
+            .rssi_floor = -(float) _rssi_floor_i * 0.5f,
     };
     return stats;
 }

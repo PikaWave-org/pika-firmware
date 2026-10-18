@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Radio.h"
 #include <pika/Time.h>
 
 #include <hal.h>
@@ -7,11 +8,6 @@
 #include <span>
 
 namespace pika::radio {
-
-struct RadioStats {
-    float signal_level;
-    float noise_level;
-};
 
 class SX1262 {
 public:
@@ -100,6 +96,7 @@ private:
     bool _ldro = false;// Low Data Rate Optimize
     float _power = 0.0f;
     bool _inited = false;
+    int8_t _snr_packet_i = 0;
     uint8_t _rssi_packet_i = 0;
     uint8_t _rssi_floor_i = 0;
 

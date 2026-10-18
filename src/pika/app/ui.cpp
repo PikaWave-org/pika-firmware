@@ -7,13 +7,29 @@
 
 #include "chprintf.h"
 
+#include <algorithm>
 #include <cstring>
 
 namespace pika::app {
 namespace {
 
-// A filled dot.
-constexpr uint8_t online_icon[8] = {0x00, 0x3C, 0x7E, 0x7E, 0x7E, 0x7E, 0x3C, 0x00};
+// A cross.
+constexpr uint8_t offline_icon[8] = {0x00, 0x42, 0x24, 0x18, 0x18, 0x24, 0x42, 0x00};
+
+// LoRa SNR in dB to bars, at least one while online. SF7, the firmware's,
+// demodulates down to about -7.5dB, so a single bar is close to that edge.
+int signal_bars(float snr) {
+    if (snr >= 5.0f) {
+        return 4;
+    }
+    if (snr >= 0.0f) {
+        return 3;
+    }
+    if (snr >= -5.0f) {
+        return 2;
+    }
+    return 1;
+}
 
 }// namespace
 
@@ -58,17 +74,28 @@ void Menu::draw_item(size_t i) {
     const int y = (int) i * row_h + items_y;
     app_->canvas().rect<false>(label_x, y, 160 - label_x, row_h);
     app_->canvas().text(label_x, y, items_[i].name);
-    // The value and the icon go over the name, so a long one ends where they
-    // start; the icon's place is kept even without one.
+    // The value and the slot go over the name, so a long one ends where they
+    // start; the slot's place is kept even when empty.
     if (items_[i].value != nullptr) {
         const int w = 8 * (int) strlen(items_[i].value);
-        const int x = icon_x - 2 - w;
+        const int x = slot_x - 2 - w;
         app_->canvas().rect<false>(x - 2, y, w + 4, icon_size);
         app_->canvas().text(x, y, items_[i].value);
     }
-    app_->canvas().rect<false>(icon_x, y, icon_size, icon_size);
-    if (items_[i].icon != nullptr) {
-        app_->canvas().bitmap(icon_x, y, icon_size, icon_size, items_[i].icon);
+    app_->canvas().rect<false>(slot_x, y, slot_w, row_h);
+    if (items_[i].bars >= 0) {
+        draw_bars(y, items_[i].bars);
+    } else if (items_[i].icon != nullptr) {
+        app_->canvas().bitmap(slot_x + (slot_w - icon_size) / 2, y, icon_size, icon_size, items_[i].icon);
+    }
+}
+
+// Rising 3, 5, 7 and 9px, bottom aligned one pixel above the next row; an
+// unlit bar is its baseline, so all four places show.
+void Menu::draw_bars(int y, int lit) {
+    for (int bar = 0; bar < 4; bar++) {
+        const int h = bar < lit ? 3 + 2 * bar : 1;
+        app_->canvas().rect<true>(slot_x + 3 * bar, y + row_h - 1 - h, 2, h);
     }
 }
 
@@ -156,10 +183,9 @@ void MainMenuScreen::on_press(input::Button button) {
 void HomeScreen::init() {
     auto peers = app_->peers();
     for (size_t i = 0; i < peers.size(); ++i) {
-        auto &c = app_->peers()[i];
-        peer_items_[i].name = c.name.data();
+        peer_items_[i].name = peers[i].name.data();
         peer_items_[i].on_activate = [](void *) {};
-        update_item(i);
+        update_peer_item(peers[i]);
     }
     menu_.set_items({peer_items_.data(), peers.size()});
     menu_.reset();
@@ -186,39 +212,35 @@ void HomeScreen::on_press(input::Button button) {
     menu_.on_press(button);
 }
 
-void HomeScreen::on_peer_updated(Address peer_addr) {
-    auto peers = app_->peers();
-    for (size_t i = 0; i < peers.size(); ++i) {
-        if (peers[i].addr != peer_addr) {
-            continue;
-        }
-        update_item(i);
-        // Otherwise drawn with the rest when this screen is shown again.
-        if (app_->is_active(*this)) {
-            menu_.draw_item(i);
-        }
+void HomeScreen::on_peer_updated(const Peer &peer) {
+    const size_t peer_idx = update_peer_item(peer);
+    // Otherwise drawn with the rest when this screen is shown again.
+    if (app_->is_active(*this)) {
+        menu_.draw_item(peer_idx);
     }
 }
 
-void HomeScreen::update_item(size_t i) {
-    const Peer &peer = app_->peers()[i];
-    peer_items_[i].icon = app_->mac().is_online(peer.addr) ? online_icon : nullptr;
-    bool tx_pending = false;
-    for (auto &tx_msg: peer.tx_msgs) {
-        if (not(tx_msg.flags & TxMessage::acked)) {
-            tx_pending = true;
-        }
-    }
-    bool rx_pending = false;
-    for (auto &rx_msg: peer.rx_msgs) {
-        if (rx_msg.size_received < rx_msg.size) {
-            rx_pending = true;
-        }
-    }
+size_t HomeScreen::update_peer_item(const Peer &peer) {
+    const size_t peer_idx = &peer - app_->peers().data();
+    const bool tx_pending = std::any_of(peer.tx_msgs.begin(), peer.tx_msgs.end(),
+                                        [](const TxMessage &msg) { return not(msg.flags & TxMessage::acked); });
+    const bool rx_pending = std::any_of(peer.rx_msgs.begin(), peer.rx_msgs.end(),
+                                        [](const RxMessage &msg) { return msg.size_received < msg.size; });
 
-    chsnprintf(peer_counts_[i].data(), peer_counts_[i].size(), "%i %c%c", int(peer.rssi), tx_pending ? 'T' : ' ',
-               rx_pending ? 'R' : ' ');
-    peer_items_[i].value = peer_counts_[i].data();
+    MenuItem &item = peer_items_[peer_idx];
+    std::array<char, 12> &status = peer_status_[peer_idx];
+    const bool online = peer.info.is_online;
+    const char tx = tx_pending ? 'T' : ' ';
+    const char rx = rx_pending ? 'R' : ' ';
+    if (online) {
+        chsnprintf(status.data(), status.size(), "%d %c%c", (int) peer.info.radio_stats.snr_packet, tx, rx);
+    } else {
+        chsnprintf(status.data(), status.size(), "%c%c", tx, rx);
+    }
+    item.value = status.data();
+    item.bars = online ? (int8_t) signal_bars(peer.info.radio_stats.snr_packet) : -1;
+    item.icon = online ? nullptr : offline_icon;
+    return peer_idx;
 }
 
 void HomeScreen::record_message_start() {

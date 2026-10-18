@@ -100,9 +100,9 @@ public:
     }
 
     // MAC thread: queued for handle_frame_events().
-    void on_data_frame_sent(Address addr) override;
-    void on_data_frame_received(Address addr, std::span<const uint8_t> frame) override;
-    void on_peer_updated(Address addr, float rssi) override;
+    void on_data_frame_sent(Address addr, const PeerInfo &peer_info) override;
+    void on_data_frame_received(Address addr, std::span<const uint8_t> data, const PeerInfo &peer_info) override;
+    void on_peer_updated(Address addr, const PeerInfo &peer_info) override;
 
 private:
     static constexpr Time RETRANSMIT_DELAY = 700 * MILLISECOND;
@@ -144,7 +144,7 @@ private:
     FixedVector<uint8_t, 256> tx_buf_;
 
     // A FrameHandler call, copied, as the received frame is only valid during the call.
-    struct FrameEvent {
+    struct MACEvent {
         enum Kind : uint8_t { sent, received, peer_updated };
 
         static const char *name(Kind kind) {
@@ -161,14 +161,15 @@ private:
 
         Kind kind{};
         Address addr{};
-        FixedVector<uint8_t, 256> frame;
+        FixedVector<uint8_t, 256> data;
+        PeerInfo peer_info{};
     };
 
     // Written by the MAC thread, read by the App thread.
-    ConcurrentRingBuffer<FrameEvent, 8> frame_events_;
+    ConcurrentRingBuffer<MACEvent, 8> frame_events_;
     event_source_t frame_event_src_;
 
-    void post_frame_event(FrameEvent::Kind kind, Address addr, std::span<const uint8_t> frame);
+    void post_frame_event(MACEvent::Kind kind, Address addr, const PeerInfo &peer_info, std::span<const uint8_t> data);
 
     void handle_frame_events();
 

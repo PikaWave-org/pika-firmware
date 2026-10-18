@@ -22,7 +22,7 @@ public:
 
     bool empty() const { return size() == 0U; }
 
-    bool full() const { return size() == SIZE; }
+    bool full() const { return size() >= SIZE; }
 
     // Writer: up to n free elements at the write position, contiguous, so
     // fewer if the ring wraps first. Filled in place, then published by

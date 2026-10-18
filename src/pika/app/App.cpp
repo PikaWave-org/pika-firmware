@@ -305,53 +305,60 @@ void App::finish_recording() {
         msg.size = size;
         msg.flags = 0;
         recording_peer_->tx_msgs.commit(1);
-        home_screen_.on_peer_updated(recording_peer_->addr);
+        home_screen_.on_peer_updated(*recording_peer_);
         LOG("tx message added: id=%u", msg.id);
         send_messages(*recording_peer_);
     }
     recording_peer_ = nullptr;
 }
 
-void App::on_data_frame_sent(Address addr) { post_frame_event(FrameEvent::sent, addr, {}); }
-
-void App::on_data_frame_received(Address addr, std::span<const uint8_t> frame) {
-    post_frame_event(FrameEvent::received, addr, frame);
+void App::on_data_frame_sent(Address addr, const PeerInfo &peer_info) {
+    post_frame_event(MACEvent::sent, addr, peer_info, {});
 }
 
-void App::on_peer_updated(Address addr, float rssi) {
-    post_frame_event(FrameEvent::peer_updated, addr, {reinterpret_cast<uint8_t *>(&rssi), sizeof(float)});
+void App::on_data_frame_received(Address addr, std::span<const uint8_t> data, const PeerInfo &peer_info) {
+    post_frame_event(MACEvent::received, addr, peer_info, data);
 }
 
-void App::post_frame_event(FrameEvent::Kind kind, Address addr, std::span<const uint8_t> frame) {
-    const std::span<FrameEvent> slot = frame_events_.write_span(1);
-    if (slot.empty() or frame.size() > slot[0].frame.cap()) {
-        LOG("WARNING: frame event: %s from " ADDR_FMT " dropped, queue full", FrameEvent::name(kind), ADDR_ARG(addr));
+void App::on_peer_updated(Address addr, const PeerInfo &peer_info) {
+    post_frame_event(MACEvent::peer_updated, addr, peer_info, {});
+}
+
+void App::post_frame_event(MACEvent::Kind kind, Address addr, const PeerInfo &peer_info,
+                           std::span<const uint8_t> data) {
+    if (frame_events_.full()) {
+        LOG("WARNING: frame event: %s from " ADDR_FMT " dropped, queue full", MACEvent::name(kind), ADDR_ARG(addr));
         return;
     }
-    FrameEvent &event = slot[0];
+
+    MACEvent &event = frame_events_.write_span(1)[0];
     event.kind = kind;
     event.addr = addr;
-    event.frame.resize(frame.size());
-    std::copy(frame.begin(), frame.end(), event.frame.begin());
+    event.data.resize(data.size());
+    event.peer_info = peer_info;
+    std::copy(data.begin(), data.end(), event.data.begin());
     frame_events_.commit(1);
     chEvtBroadcast(&frame_event_src_);
 }
 
 void App::handle_frame_events() {
     while (not frame_events_.empty()) {
-        FrameEvent &event = frame_events_.read_span(1)[0];
+        MACEvent &event = frame_events_.read_span(1)[0];
         Peer *peer = get_peer(event.addr);
         // LOG("frame event: %s from " ADDR_FMT " \"%s\", %u bytes", FrameEvent::name(event.kind), ADDR_ARG(event.addr),
         //     peer ? peer->name.data() : "unknown peer", (unsigned) event.frame.size());
+        if (peer != nullptr) {
+            peer->info = event.peer_info;
+        }
         switch (event.kind) {
-            case FrameEvent::sent:
+            case MACEvent::sent:
                 if (peer) {
                     send_messages(*peer);
                 }
                 break;
 
-            case FrameEvent::received: {
-                const std::span<const uint8_t> frame{event.frame.data(), event.frame.size()};
+            case MACEvent::received: {
+                const std::span<const uint8_t> frame{event.data.data(), event.data.size()};
                 if (frame.empty()) {
                     break;
                 }
@@ -370,9 +377,10 @@ void App::handle_frame_events() {
                 break;
             }
 
-            case FrameEvent::peer_updated:
-                peer->rssi = *reinterpret_cast<float *>(event.frame.data());
-                home_screen_.on_peer_updated(event.addr);
+            case MACEvent::peer_updated:
+                if (peer != nullptr) {
+                    home_screen_.on_peer_updated(*peer);
+                }
                 break;
         }
         frame_events_.pop(1);
@@ -442,7 +450,7 @@ void App::on_message(Peer &peer, const types::app::message_new &msg_new) {
         msg->size_received = 0;
         msg->msg_type = msg_new.msg_type;
         peer.rx_msgs.commit(1);
-        home_screen_.on_peer_updated(peer.addr);
+        home_screen_.on_peer_updated(peer);
     } else {
         // Update message info
         msg->size = msg_new.size;
@@ -538,7 +546,7 @@ void App::on_message(Peer &peer, const types::app::message_get &msg_get) {
                 // Receiver ack for full message
                 LOG("msg acked id=%u", msg.id);
                 msg.flags |= TxMessage::acked;
-                home_screen_.on_peer_updated(peer.addr);
+                home_screen_.on_peer_updated(peer);
                 beep(1000.0f, 0.1f);
                 beep(600.0f, 0.1f);
             } else if (size > 0) {
@@ -593,7 +601,7 @@ void App::on_message(Peer &peer, const types::app::message_data &msg_data) {
         }
         msg->size_received += data.size();
         if (msg->size_received == msg->size) {
-            home_screen_.on_peer_updated(peer.addr);
+            home_screen_.on_peer_updated(peer);
             LOG("app: message %u from \"%s\" received, %u bytes", (unsigned) msg->id, peer.name.data(),
                 (unsigned) msg->size);
             play_message(peer, *msg);
@@ -673,6 +681,9 @@ bool App::fill_melpe_frame(std::span<uint8_t> frame) {
 
 void App::beep(float freq_hz, float duration_s) {
     audio::DACSpeaker &spk = *cfg_.speaker;
+    if (spk.busy() or not cfg_.recorder->idle()) {
+        return;
+    }
     spk.stop_stream();
     tone_gen.tone(spk, freq_hz, 0.3f, duration_s);
     spk.wait_idle(TIME_S2I(1));

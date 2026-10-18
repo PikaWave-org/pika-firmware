@@ -45,7 +45,7 @@ struct Peer {
     std::array<char, 64> name{};
     RingBuffer<RxMessage, 32> rx_msgs{};
     RingBuffer<TxMessage, 32> tx_msgs{};
-    float rssi{};
+    PeerInfo info{};
 };
 
 }// namespace pika::app

@@ -3,6 +3,9 @@
 #include <ch.hpp>
 #undef HASH// HASH macro interferes with messgen HASH
 
+#include "radio/Radio.h"
+
+
 #include <pika/FixedVector.h>
 #include <pika/Time.h>
 #include <pika/log.h>
@@ -24,13 +27,17 @@ using Address = uint64_t;
 #define ADDR_ARG(addr) (unsigned long) ((uint64_t) (addr) >> 32U), (unsigned long) ((uint64_t) (addr) & 0xFFFFFFFFU)
 using MessageID = uint32_t;
 
+struct PeerInfo {
+    bool is_online{};
+    radio::RadioStats radio_stats{};
+};
+
 // Called on the MAC thread, so implementations should only hand the work off.
 class FrameHandler {
 public:
-    virtual void on_data_frame_sent(Address addr) = 0;
-    virtual void on_data_frame_received(Address addr, std::span<const uint8_t> frame) = 0;
-    // The peer went online or offline, see MAC::is_online().
-    virtual void on_peer_updated(Address addr, float rssi) = 0;
+    virtual void on_data_frame_sent(Address addr, const PeerInfo &peer_info) = 0;
+    virtual void on_data_frame_received(Address addr, std::span<const uint8_t> frame, const PeerInfo &peer_info) = 0;
+    virtual void on_peer_updated(Address addr, const PeerInfo &peer_info) = 0;
 };
 
 struct ListenWindow {
@@ -74,7 +81,7 @@ public:
                 // peer.is_synced is managed from this thread
                 // peer.tx_buf may be added from another thread, but cleared only from this thread,
                 // so it's safe to check if it is empty without mutex
-                if (not peer.is_synced or peer.tx_buf.empty()) {
+                if (not peer.info.is_online or peer.tx_buf.empty()) {
                     continue;
                 }
 
@@ -170,13 +177,6 @@ public:
 
     void set_frame_handler(FrameHandler *handler) { handler_ = handler; }
 
-    // Synced: a sync heard from it within PEER_TIMEOUT.
-    bool is_online(Address addr) {
-        chibios_rt::MutexLocker lock(peers_mtx_);
-        const Peer *peer = find_peer(addr);
-        return peer != nullptr and peer->is_synced;
-    }
-
     bool is_busy(Address dst_addr) {
         chibios_rt::MutexLocker lock(peers_mtx_);
         Peer &peer = get_peer(dst_addr);
@@ -217,8 +217,7 @@ private:
         Address addr{};
         ListenWindow listen_window;
         Time last_seen{};
-        bool is_synced{};
-        float rssi{};
+        PeerInfo info{};
         FixedVector<uint8_t, 256> tx_buf{};
     };
 
@@ -256,8 +255,8 @@ private:
         {
             chibios_rt::MutexLocker lock(peers_mtx_);
             for (auto &peer: peers_) {
-                if (peer.is_synced and t - peer.last_seen > PEER_TIMEOUT) {
-                    peer.is_synced = false;
+                if (peer.info.is_online and t - peer.last_seen > PEER_TIMEOUT) {
+                    peer.info.is_online = false;
                     expired.add(peer.addr);
                 }
             }
@@ -265,7 +264,8 @@ private:
         for (Address addr: expired) {
             // LOG("mac peer " ADDR_FMT " offline", ADDR_ARG(addr));
             if (handler_ != nullptr) {
-                handler_->on_peer_updated(addr, -200.0f);
+                PeerInfo peer_info{};
+                handler_->on_peer_updated(addr, peer_info);
             }
         }
     }
@@ -336,33 +336,32 @@ private:
     }
 
     void handle_frame(Time &rx_time, const types::mac::sync &sync) {
-        bool updated;
         bool idle;
-        float rssi = radio_->get_stats().signal_level;
+        radio::RadioStats radio_stats = radio_->get_stats();
+        // LOG("mac rx <- " ADDR_FMT ": sync local_time=%u remote_time=%u", ADDR_ARG(sync.src_addr), uint32_t(rx_time),
+        // uint32_t(sync.time));
+        Peer *peer;
         {
-            // LOG("mac rx <- " ADDR_FMT ": sync local_time=%u remote_time=%u", ADDR_ARG(sync.src_addr), uint32_t(rx_time),
-            // uint32_t(sync.time));
             chibios_rt::MutexLocker lock(peers_mtx_);
-            Peer &peer = get_peer(sync.src_addr);
-            updated = not peer.is_synced;
-            peer.listen_window.time = sync.listen_time + rx_time;
-            peer.listen_window.interval = sync.listen_interval;
-            peer.listen_window.duration = sync.listen_duration;
-            peer.last_seen = now();
-            peer.is_synced = true;
-            peer.rssi = rssi;
-            idle = peer.tx_buf.empty();
-
-            Time t = now();
-            Time win_diff =
-                    get_listen_window(peer.listen_window, t).first - get_listen_window(listen_window_, rx_time).second;
-            // LOG("win_diff %i clock_diff=%i rssi=%.1fdBm", int32_t(win_diff), int32_t(rx_time - sync.time), peer.rssi);
-            listen_window_.time += win_diff / 10;
+            peer = &get_peer(sync.src_addr);
         }
+        peer->listen_window.time = sync.listen_time + rx_time;
+        peer->listen_window.interval = sync.listen_interval;
+        peer->listen_window.duration = sync.listen_duration;
+        peer->last_seen = now();
+        peer->info.is_online = true;
+        peer->info.radio_stats = radio_stats;
+        idle = peer->tx_buf.empty();
+
+        Time t = now();
+        Time win_diff =
+                get_listen_window(peer->listen_window, t).first - get_listen_window(listen_window_, rx_time).second;
+        // LOG("win_diff %i clock_diff=%i rssi=%.1fdBm", int32_t(win_diff), int32_t(rx_time - sync.time), peer.rssi);
+        listen_window_.time += win_diff / 10;
         if (handler_ != nullptr) {
-            handler_->on_peer_updated(sync.src_addr, rssi);
+            handler_->on_peer_updated(sync.src_addr, peer->info);
             if (idle) {
-                handler_->on_data_frame_sent(sync.src_addr);
+                handler_->on_data_frame_sent(sync.src_addr, peer->info);
             }
         }
     }
@@ -371,8 +370,9 @@ private:
         // LOG("mac rx <- " ADDR_FMT ": data_frame, size=%i", ADDR_ARG(data.src_addr), data.payload.size());
         if (data.dst_addr == addr_ and handler_ != nullptr) {
             Peer &peer = get_peer(data.src_addr);
-            peer.rssi = radio_->get_stats().signal_level;
-            handler_->on_data_frame_received(data.src_addr, data.payload);
+            radio::RadioStats radio_stats = radio_->get_stats();
+            peer.info.radio_stats = radio_stats;
+            handler_->on_data_frame_received(data.src_addr, data.payload, peer.info);
         }
     }
 };
