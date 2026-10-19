@@ -2,10 +2,12 @@
 
 #include <pika/fatfs_wrapper/fatfsWrapper.h>
 
+#include "chprintf.h"
 #include "ff.h"
 
 #include <algorithm>
 #include <charconv>
+#include <cmath>
 #include <cstring>
 #include <string_view>
 
@@ -117,6 +119,62 @@ void App::load_identity() {
     LOG("id: " ADDR_FMT " \"%s\"", ADDR_ARG(self_.addr), self_.name.data());
 }
 
+void App::load_settings() {
+    // Static: too big for the stack init() runs on.
+    static FIL file;
+    static char line[64];
+
+    const FRESULT res = wf_open(&file, "/settings.txt", FA_READ);
+    if (res != FR_OK) {
+        LOG("settings: cannot open settings.txt, error %d, keeping defaults", (int) res);
+        return;
+    }
+    unsigned line_no = 0;
+    while (wf_gets(line, sizeof(line), &file) != nullptr) {
+        line_no++;
+        const std::string_view text = trim(line);
+        if (text.empty() or text.front() == '#') {
+            continue;
+        }
+        const size_t eq = text.find('=');
+        const std::string_view key = trim(text.substr(0, eq));
+        const std::string_view value = eq == std::string_view::npos ? std::string_view{} : trim(text.substr(eq + 1));
+        int v = 0;
+        const auto [end, ec] = std::from_chars(value.data(), value.data() + value.size(), v);
+        if (value.empty() or ec != std::errc{} or end != value.data() + value.size()) {
+            LOG("settings: line %u malformed, ignored", line_no);
+        } else if (key == "backlight") {
+            set_backlight(std::clamp(v, 0, 100) * 10);
+        } else if (key == "tx_power") {
+            cfg_.mac->set_tx_power((float) v);
+        } else {
+            LOG("settings: line %u has an unknown key, ignored", line_no);
+        }
+    }
+    wf_close(&file);
+}
+
+void App::save_settings() {
+    // Static: too big for a thread stack.
+    static FIL file;
+
+    char text[48];
+    const int n = chsnprintf(text, sizeof(text), "backlight=%d\ntx_power=%d\n", backlight_brightness_ / 10,
+                             (int) lroundf(cfg_.mac->tx_power()));
+    FRESULT res = wf_open(&file, "/settings.txt", FA_WRITE | FA_CREATE_ALWAYS);
+    if (res == FR_OK) {
+        UINT written = 0;
+        res = wf_write(&file, text, (UINT) n, &written);
+        const FRESULT closed = wf_close(&file);
+        if (res == FR_OK) {
+            res = written == (UINT) n ? closed : FR_DENIED;
+        }
+    }
+    if (res != FR_OK) {
+        LOG("settings: cannot save settings.txt, error %d", (int) res);
+    }
+}
+
 void App::load_peers() {
     // Static: too big for a thread stack.
     static FIL file;
@@ -223,6 +281,7 @@ void App::init() {
     load_identity();
     load_peers();
     set_backlight(500);
+    load_settings();
     buttons_.init();
     active_screen_->init();
     activate_screen(home_screen_);

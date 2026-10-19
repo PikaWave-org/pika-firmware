@@ -146,13 +146,15 @@ std::span<const uint8_t> SX1262::rx(Time &rx_timestamp, const Time &end_time) {
 
     // Wait for RxDone interrupt
     Time dt = end_time - now();
+    msg_t wait_res = MSG_TIMEOUT;
     if (dt >= 0) {
-        if (MSG_TIMEOUT == chBSemWaitTimeout(&_sem_dio1, TIME_US2I(dt))) {
-            // Timeout, switch to Standby
-            // send_command(CMD_SET_STANDBY, 1);// STDBY_XOSC
-        }
+        wait_res = chBSemWaitTimeout(&_sem_dio1, TIME_US2I(dt));
     }
     rx_timestamp = now();
+    if (wait_res == MSG_TIMEOUT) {
+        // No packet received, update noise floor before going to standby
+        get_rssi_inst();
+    }
     send_command(CMD_SET_STANDBY, 1);// STDBY_XOSC
 
     // Disable LNA
@@ -281,7 +283,8 @@ void SX1262::do_set_power() {
     command_params()[2] = 0x00;// deviceSel
     command_params()[3] = 0x01;// paLut
     send_command_n(CMD_SET_PA_CONFIG, 4);
-    uint8_t pwr_v = std::clamp((int) lroundf(_power), -9, 22);
+    // The chip's own output, before the external PA; set_power() has already clamped it.
+    uint8_t pwr_v = std::clamp((int) lroundf(_power - _pa_gain_db), -9, 22);
     send_command(CMD_SET_TX_PARAMS, pwr_v, 0x01);
 }
 
@@ -302,7 +305,7 @@ void SX1262::set_mod_params(uint8_t sf, uint8_t bw, uint8_t cr) {
 }
 
 void SX1262::set_power(float power) {
-    _power = power;
+    _power = std::clamp(power, -9.0f + _pa_gain_db, 22.0f + _pa_gain_db);
     if (_inited) {
         do_set_power();
     }

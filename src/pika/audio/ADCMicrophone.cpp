@@ -142,7 +142,7 @@ void ADCMicrophone::fill_cb(std::span<adcsample_t> buf) {
         float v_abs_gained = v_abs * agc_gain_;
         if (v_abs_gained >= ADC_VALUE_MID) {
             // Hard overload, set min gain immediately
-            agc_gain_ = 1.0f;
+            agc_gain_ *= ADC_VALUE_MID / v_abs_gained;
         } else {
             // Proportional asymmetric gain regulation - slow up, fast down
             float gain_err = v_abs * agc_gain_ / AGC_TARGET;

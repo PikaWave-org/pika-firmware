@@ -120,7 +120,7 @@ private:
     static constexpr float AGC_W_DOWN = 0.01f;
     static constexpr float AGC_W_UP = 0.00005f;
     static constexpr float AGC_TARGET = ADC_VALUE_MID * 0.5f;
-    static constexpr float AGC_GAIN_MAX = 1000.0f;
+    static constexpr float AGC_GAIN_MAX = 500.0f;
 
     static void fill_cb_static(ADCDriver *adcp);
     static void error_cb(ADCDriver *adcp, adcerror_t err);

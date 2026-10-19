@@ -60,13 +60,13 @@ public:
 
 private:
     static constexpr int row_h = 10;
-    static constexpr int label_x = 16;
+    static constexpr int label_x = 8;
     static constexpr int title_h = 11;
     static constexpr int title_y = StatusBar::status_bar_h;
     static constexpr int items_y = title_y + title_h + 1;
     // The slot at the row's right end: four 2px bars with 1px between.
     static constexpr int slot_w = 4 * 2 + 3;
-    static constexpr int slot_x = 160 - 2 - slot_w;
+    static constexpr int slot_x = 160 - slot_w;
     static constexpr int icon_size = 8;
 
     App *app_;
@@ -119,25 +119,42 @@ public:
     bool show_status_bar() const override { return false; };
 };
 
+// RIGHT on a setting starts adjusting it: UP/DOWN step the value, stopping at
+// the ends, and LEFT finishes. The value being adjusted shows in brackets.
 class SettingsScreen : public Screen {
 public:
     SettingsScreen(App &app, Screen *parent_screen) : Screen(app, parent_screen) {}
 
-    void init() override { menu_.reset(); }
+    void init() override;
 
     void draw() override;
 
     void on_press(input::Button button) override;
 
 private:
-    static constexpr int backlight_steps_num = 2;
-    static constexpr int backlight_step = 1000 / backlight_steps_num;
+    // PWM duty out of 1000: 0, 10, 20, 50 and 100%.
+    static constexpr int backlight_steps[] = {0, 100, 200, 500, 1000};
 
-    std::array<MenuItem, 2> menu_items{
-            {{"Backlight", [](void *self) { ((SettingsScreen *) self)->set_backlight(); }}, {"Dummy", [](void *) {}}}};
+    // dBm at the antenna. The SX1262's -9..22dBm behind the module's 10dB PA
+    // reaches 1..32; the driver clamps the rest.
+    static constexpr int tx_power_steps[] = {1, 10, 14, 17, 20, 24, 27, 30};
+
+    enum : size_t { backlight_item, tx_power_item, items_num };
+
+    std::array<MenuItem, items_num> menu_items{{
+            {"Backlight", [](void *self) { ((SettingsScreen *) self)->start_adjust(); }},
+            {"TX power", [](void *self) { ((SettingsScreen *) self)->start_adjust(); }},
+    }};
     Menu menu_{*app_, "Settings", menu_items, this};
+    std::array<std::array<char, 12>, items_num> values_{};
+    bool adjusting_ = false;
 
-    void set_backlight();
+    void start_adjust();
+
+    // One step, +1 up or -1 down, of the setting under the cursor.
+    void adjust(int dir);
+
+    void show_value(size_t item);
 };
 
 class MainMenuScreen : public Screen {

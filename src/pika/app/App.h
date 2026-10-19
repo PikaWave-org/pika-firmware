@@ -82,6 +82,9 @@ public:
 
     void finish_recording();
 
+    // Writes the current backlight and transmit power to /settings.txt.
+    void save_settings();
+
     // Plays the newest fully received message from the peer; false if there
     // is none or it could not start.
     bool play_last_message(size_t peer_index);
@@ -122,6 +125,10 @@ private:
 
     // Reads /contacts.txt from the SD card, one "id,name,key" per line.
     void load_peers();
+
+    // Applies /settings.txt, "key=value" lines: backlight in percent,
+    // tx_power in dBm at the antenna. Missing keys keep their defaults.
+    void load_settings();
 
     // Reads our own entry from /id.txt, "id,name,key" like a peer, and sets
     // the address in the MAC.

@@ -18,10 +18,11 @@ public:
         FLRC,
     };
 
+    // pa_gain_db: an external amplifier after the chip, 0 if there is none.
     SX1262(SPIDriver &spi, ioline_t gpio_reset, ioline_t gpio_busy, ioline_t gpio_dio1, ioline_t gpio_tx,
-           ioline_t gpio_rx) :
+           ioline_t gpio_rx, float pa_gain_db = 0.0f) :
             _spi(spi), _gpio_reset(gpio_reset), _gpio_busy(gpio_busy), _gpio_dio1(gpio_dio1), _gpio_tx(gpio_tx),
-            _gpio_rx(gpio_rx) {}
+            _gpio_rx(gpio_rx), _pa_gain_db(pa_gain_db) {}
 
     /**
          * Init driver
@@ -41,7 +42,8 @@ public:
     void set_mod_params(uint8_t sf, uint8_t bw, uint8_t cr);
 
     /**
-         * Set output power in dBm
+         * Set output power at the antenna in dBm, the external PA included.
+         * Clamped to what the chip's -9..22dBm plus that gain can reach.
          * @param power
          */
     void set_power(float power);
@@ -56,7 +58,12 @@ public:
 
     uint64_t freq() const { return _freq; }
 
+    // At the antenna, as set_power() left it after clamping.
+    float power() const { return _power; }
+
     Time tx_duration(size_t size);
+
+    float get_min_snr() const { return 10.0f - _sf * 2.5f; }
 
 private:
     static constexpr uint32_t F_XTAL = 32000000;
@@ -95,6 +102,7 @@ private:
     uint16_t _preamble_len = 0x40;
     bool _ldro = false;// Low Data Rate Optimize
     float _power = 0.0f;
+    float _pa_gain_db = 0.0f;
     bool _inited = false;
     int8_t _snr_packet_i = 0;
     uint8_t _rssi_packet_i = 0;

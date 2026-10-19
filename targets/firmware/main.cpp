@@ -93,8 +93,8 @@ static const SPIConfig radio_spi_cfg = {
         .cfg2 = 0U,
 };
 
-static pika::radio::SX1262 radio{BOARD_RADIO_SPI, LINE_RADIO_RST,  LINE_RADIO_BUSY,
-                                 LINE_RADIO_DIO1, LINE_RADIO_TXEN, LINE_RADIO_RXEN};
+static pika::radio::SX1262 radio{BOARD_RADIO_SPI, LINE_RADIO_RST,  LINE_RADIO_BUSY,       LINE_RADIO_DIO1,
+                                 LINE_RADIO_TXEN, LINE_RADIO_RXEN, BOARD_RADIO_PA_GAIN_DB};
 
 static pika::MAC mac{&radio};
 

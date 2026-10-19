@@ -69,6 +69,11 @@ public:
     void main() override {
         listen_window_.time = listen_window_.duration * addr_;
         while (true) {
+            if (tx_power_changed_) {
+                // Cleared first, so a request landing meanwhile is applied next pass.
+                tx_power_changed_ = false;
+                radio_->set_power(tx_power_req_);
+            }
             Time t = now();
             expire_peers(t);
             auto lsn_win = get_listen_window(listen_window_, t);
@@ -170,6 +175,14 @@ public:
     }
 
     // The address also seeds the sync jitter, so boards do not jitter alike.
+    // Applied by the MAC thread, which owns the radio, before its next transmission.
+    void set_tx_power(float dbm) {
+        tx_power_req_ = dbm;
+        tx_power_changed_ = true;
+    }
+
+    float tx_power() const { return tx_power_changed_ ? tx_power_req_ : radio_->power(); }
+
     void set_address(Address addr) {
         addr_ = addr;
         rng_ = (uint32_t) addr;
@@ -203,6 +216,8 @@ public:
         return false;
     }
 
+    float get_min_snr() const { return radio_->get_min_snr(); }
+
 private:
     static constexpr size_t PEERS_MAX = 8;
     // Sync every SYNC_INTERVAL ± SYNC_JITTER, so boards that collide once drift apart.
@@ -228,6 +243,8 @@ private:
             .duration = 150 * MILLISECOND,
     };
     RADIO *radio_ = nullptr;
+    volatile float tx_power_req_ = 0.0f;
+    volatile bool tx_power_changed_ = false;
     FrameHandler *handler_ = nullptr;
     FixedVector<Peer, PEERS_MAX> peers_;
     // Guards peers_: senders use it from other threads.

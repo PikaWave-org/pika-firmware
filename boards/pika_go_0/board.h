@@ -234,6 +234,13 @@
                                      PAL_STM32_OSPEED_HIGHEST)
 
 /*
+ * Gain of the radio module's own power amplifier, between the SX1262 and the
+ * antenna, in dB. Transmit power is set as what leaves the board; the driver
+ * takes this off before programming the chip.
+ */
+#define BOARD_RADIO_PA_GAIN_DB      10.0f
+
+/*
  * TI BQ25895 battery charger on I2C4, AF4 on SCL/SDA.
  *
  * The address is the 7 bit one. SCL, SDA and LINE_CHG_INT have 10k pull-ups

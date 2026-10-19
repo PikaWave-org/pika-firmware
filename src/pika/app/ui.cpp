@@ -8,6 +8,7 @@
 #include "chprintf.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace pika::app {
@@ -16,16 +17,28 @@ namespace {
 // A cross.
 constexpr uint8_t offline_icon[8] = {0x00, 0x42, 0x24, 0x18, 0x18, 0x24, 0x42, 0x00};
 
+// One step up or down a table from current, which need not be in it: from the
+// step at or below it, stopping at the ends.
+int next_step(std::span<const int> steps, int current, int dir) {
+    const int last = (int) steps.size() - 1;
+    int i = 0;
+    while (i < last and steps[i + 1] <= current) { i++; }
+    return steps[std::clamp(i + dir, 0, last)];
+}
+
 // LoRa SNR in dB to bars, at least one while online. SF7, the firmware's,
 // demodulates down to about -7.5dB, so a single bar is close to that edge.
-int signal_bars(float snr) {
-    if (snr >= 5.0f) {
+int signal_bars(float snr, float min_snr) {
+    // SNR compensated by SF
+    float a = snr - min_snr;
+    LOG("SNR=%f a=%f", snr, a);
+    if (a >= 10.0f) {
         return 4;
     }
-    if (snr >= 0.0f) {
+    if (a >= 5.0f) {
         return 3;
     }
-    if (snr >= -5.0f) {
+    if (a >= 0.0f) {
         return 2;
     }
     return 1;
@@ -75,14 +88,19 @@ void Menu::draw_item(size_t i) {
     app_->canvas().rect<false>(label_x, y, 160 - label_x, row_h);
     app_->canvas().text(label_x, y, items_[i].name);
     // The value and the slot go over the name, so a long one ends where they
-    // start; the slot's place is kept even when empty.
+    // start. Without bars or an icon there is no slot and the value takes
+    // the right edge.
+    const bool slot = items_[i].bars >= 0 or items_[i].icon != nullptr;
+    const int right = slot ? slot_x - 2 : 160;
     if (items_[i].value != nullptr) {
         const int w = 8 * (int) strlen(items_[i].value);
-        const int x = slot_x - 2 - w;
-        app_->canvas().rect<false>(x - 2, y, w + 4, icon_size);
+        const int x = right - w;
+        app_->canvas().rect<false>(x - 2, y, right - x + 2, icon_size);
         app_->canvas().text(x, y, items_[i].value);
     }
-    app_->canvas().rect<false>(slot_x, y, slot_w, row_h);
+    if (slot) {
+        app_->canvas().rect<false>(slot_x, y, slot_w, row_h);
+    }
     if (items_[i].bars >= 0) {
         draw_bars(y, items_[i].bars);
     } else if (items_[i].icon != nullptr) {
@@ -104,11 +122,13 @@ void Menu::draw_cursor(bool on) {
         return;
     }
     const int y = cursor_ * row_h + items_y;
-    if (on) {
-        app_->canvas().text<true>(4, y, ">");
-    } else {
-        app_->canvas().text<false>(4, y, ">");
+    // A filled triangle at the left edge, as tall as a capital: rows 1, 2, 3,
+    // 4, 3, 2, 1 pixels wide.
+    if (not on) {
+        app_->canvas().rect<false>(0, y, 4, 7);
+        return;
     }
+    for (int row = 0; row < 7; row++) { app_->canvas().rect<true>(0, y + row, 4 - std::abs(row - 3), 1); }
 }
 
 void Menu::move_cursor(int cursor) {
@@ -156,20 +176,80 @@ void AboutScreen::on_press(input::Button) {
     app_->activate_screen(*parent_screen_);
 }
 
+void SettingsScreen::init() {
+    menu_.reset();
+    adjusting_ = false;
+    show_value(backlight_item);
+    show_value(tx_power_item);
+}
+
 void SettingsScreen::draw() { menu_.draw(); }
 
 void SettingsScreen::on_press(input::Button button) {
-    if (not menu_.on_press(button)) {
-        handle_back(button);
+    if (not adjusting_) {
+        if (not menu_.on_press(button)) {
+            handle_back(button);
+        }
+        return;
     }
+    const size_t item = menu_.cursor();
+    switch (button) {
+        case input::Button::up:
+            adjust(+1);
+            break;
+        case input::Button::down:
+            adjust(-1);
+            break;
+        case input::Button::left:
+        case input::Button::right:
+            adjusting_ = false;
+            show_value(item);
+            app_->save_settings();
+            break;
+        default:
+            return;
+    }
+    menu_.draw_item(item);
 }
 
-void SettingsScreen::set_backlight() {
-    int b = (app_->get_backlight() / backlight_step) + 1;
-    if (b > backlight_steps_num) {
-        b = 0;
+void SettingsScreen::start_adjust() {
+    adjusting_ = true;
+    show_value(menu_.cursor());
+    menu_.draw_item(menu_.cursor());
+}
+
+void SettingsScreen::adjust(int dir) {
+    const size_t item = menu_.cursor();
+    switch (item) {
+        case backlight_item:
+            app_->set_backlight(next_step(backlight_steps, app_->get_backlight(), dir));
+            break;
+        case tx_power_item: {
+            const int current = (int) lroundf(app_->mac().tx_power());
+            app_->mac().set_tx_power((float) next_step(tx_power_steps, current, dir));
+            break;
+        }
+        default:
+            break;
     }
-    app_->set_backlight(b * backlight_step);
+    show_value(item);
+}
+
+void SettingsScreen::show_value(size_t item) {
+    char text[8];
+    switch (item) {
+        case backlight_item:
+            chsnprintf(text, sizeof(text), "%d%%", app_->get_backlight() / 10);
+            break;
+        case tx_power_item:
+            chsnprintf(text, sizeof(text), "%d dBm", (int) lroundf(app_->mac().tx_power()));
+            break;
+        default:
+            return;
+    }
+    const bool adjusted = adjusting_ and item == (size_t) menu_.cursor();
+    chsnprintf(values_[item].data(), values_[item].size(), adjusted ? "[%s]" : "%s", text);
+    menu_items[item].value = values_[item].data();
 }
 
 void MainMenuScreen::draw() { menu_.draw(); }
@@ -233,12 +313,13 @@ size_t HomeScreen::update_peer_item(const Peer &peer) {
     const char tx = tx_pending ? 'T' : ' ';
     const char rx = rx_pending ? 'R' : ' ';
     if (online) {
-        chsnprintf(status.data(), status.size(), "%d %c%c", (int) peer.info.radio_stats.snr_packet, tx, rx);
+        chsnprintf(status.data(), status.size(), "%d %d %c%c", (int) peer.info.radio_stats.rssi_packet,
+                   (int) peer.info.radio_stats.rssi_floor, tx, rx);
     } else {
         chsnprintf(status.data(), status.size(), "%c%c", tx, rx);
     }
     item.value = status.data();
-    item.bars = online ? (int8_t) signal_bars(peer.info.radio_stats.snr_packet) : -1;
+    item.bars = online ? (int8_t) signal_bars(peer.info.radio_stats.snr_packet, app_->mac().get_min_snr()) : -1;
     item.icon = online ? nullptr : offline_icon;
     return peer_idx;
 }
