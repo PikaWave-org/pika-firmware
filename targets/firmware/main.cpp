@@ -157,7 +157,7 @@ int main() {
 
     spiStart(&BOARD_RADIO_SPI, &radio_spi_cfg);
     LOG("radio: init");
-    radio.set_mod_params(5, 5, 4);
+    radio.set_mod_params(7, 5, 4);
     radio.set_power(20.0f);
     radio.init();
     LOG("radio: init done");

@@ -218,11 +218,15 @@ public:
 
     float get_min_snr() const { return radio_->get_min_snr(); }
 
+    Time retransmit_delay() const {
+        return listen_window_.interval;
+    }
+
 private:
     static constexpr size_t PEERS_MAX = 8;
     // Sync every SYNC_INTERVAL ± SYNC_JITTER, so boards that collide once drift apart.
-    static constexpr Time SYNC_TX_INTERVAL = 1000 * MILLISECOND;
-    static constexpr Time SYNC_JITTER = 200 * MILLISECOND;
+    static constexpr Time SYNC_TX_INTERVAL = 2000 * MILLISECOND;
+    static constexpr Time SYNC_JITTER = 500 * MILLISECOND;
     // Only syncs landing in our listen window are heard, about half of them,
     // so this spans enough of them that a peer in range does not flap.
     static constexpr Time PEER_TIMEOUT = 30 * SECOND;
@@ -239,8 +243,8 @@ private:
     Address addr_ = 0;
     ListenWindow listen_window_{
             .time = 0,
-            .interval = 300 * MILLISECOND,
-            .duration = 150 * MILLISECOND,
+            .interval = 1000 * MILLISECOND,
+            .duration = 500 * MILLISECOND,
     };
     RADIO *radio_ = nullptr;
     volatile float tx_power_req_ = 0.0f;

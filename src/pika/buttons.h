@@ -1,10 +1,12 @@
 // Press and release events from a set of active low GPIO lines, which arrive
 // as a Config so that no board header is needed here.
 //
-// Debouncing is a lockout, not a resample: the first edge is believed at once
-// and the line ignored for the next debounce period. A press reports
-// immediately; the trade is that the level is read while it may still be
-// bouncing, and a wrong read costs one missed press until the next edge.
+// Debouncing waits for the line to go quiet: every edge restarts that button's
+// DEBOUNCE wait, and its level is read once the wait passes with no further
+// edge. A press reports DEBOUNCE after the contact settles; in exchange no
+// bounce or spike, however long, can leave the state wrong. Measured on a PTT
+// switch: up to 66ms of bounce on release and sub-100us spikes while held,
+// which a lockout of the first edge read as presses and releases reversed.
 //
 // Both edges are broadcast, each button with a press and a release flag.
 //
@@ -82,7 +84,9 @@ private:
     // that raised it, so it reaches its own state without searching.
     struct State {
         Button button;     // Which Button this record stands for.
-        systime_t changed; // When it last changed, for the lockout.
+        systime_t edge;    // The latest edge; the level is read DEBOUNCE after it.
+        bool pending;      // An edge since the level was last read.
+        bool sampled_low;  // Polled lines only: the last sample, to see edges in.
         volatile bool down;// Debounced level, true while pressed.
     };
 
@@ -92,13 +96,17 @@ private:
 
     static void edge_cb(void *arg);
     static void poll_cb(virtual_timer_t *vtp, void *arg);
+    static void settle_cb(virtual_timer_t *vtp, void *arg);
 
     void poll_i();
-    void update_i(State &s);
+    void edge_i(State &s);
+    void settle_i();
 
     Config cfg_;
     event_source_t events_;
     virtual_timer_t poll_vt_;
+    // One shot, armed by an edge and re-armed while a line is still settling.
+    virtual_timer_t settle_vt_;
     State state_[count];
 };
 

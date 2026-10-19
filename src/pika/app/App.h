@@ -72,6 +72,9 @@ public:
 
     void do_set_backlight(int brightness);
 
+    // Keyboard lock, see lock_press().
+    bool locked() const { return locked_; }
+
     const BatteryStatus &battery_status() const { return cfg_.charger->status(); }
 
     // Plays a tone without waiting for it; cuts short whatever is playing.
@@ -108,7 +111,6 @@ public:
     void on_peer_updated(Address addr, const PeerInfo &peer_info) override;
 
 private:
-    static constexpr Time RETRANSMIT_DELAY = 700 * MILLISECOND;
     Config cfg_;
     Canvas canvas_;
     input::Buttons buttons_;
@@ -120,6 +122,20 @@ private:
     Screen *active_screen_{&home_screen_};
     int backlight_brightness_{};
     systime_t backlight_wake_ = 0;
+
+    // Keyboard lock: LEFT held for lock_hold locks; LEFT then RIGHT within
+    // unlock_window unlocks. While locked no press reaches a screen; releases
+    // still do, so a button held through locking, like PTT while recording,
+    // still ends what it started.
+    static constexpr sysinterval_t lock_hold = TIME_S2I(1);
+    static constexpr sysinterval_t unlock_window = TIME_S2I(1);
+    bool locked_ = false;
+    input::Button last_press_ = input::Button::count;
+    systime_t last_press_at_ = 0;
+
+    // Sees every press first; true if locked, and the screen must not see it.
+    bool lock_press(input::Button btn, systime_t now);
+    void check_lock_hold(systime_t now);
     sysinterval_t backlight_timeout_ = TIME_S2I(10);
     FixedVector<Peer, PEERS_MAX_NUM> peers_;
 

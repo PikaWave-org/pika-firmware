@@ -227,8 +227,11 @@ void App::main() {
     chEvtRegister(&cfg_.recorder->idle_events(), &recorder_listener, 3);
 
     while (true) {
+        // Shorter while LEFT is held, so a long press locks on time rather than on release.
+        const bool may_lock = not locked_ and buttons_.pressed(input::Button::left);
+        const sysinterval_t timeout = may_lock ? TIME_MS2I(50) : TIME_MS2I(500);
         const eventmask_t events =
-                chEvtWaitAnyTimeout(EVENT_MASK(0) | EVENT_MASK(1) | EVENT_MASK(2) | EVENT_MASK(3), TIME_MS2I(500));
+                chEvtWaitAnyTimeout(EVENT_MASK(0) | EVENT_MASK(1) | EVENT_MASK(2) | EVENT_MASK(3), timeout);
         if (events & EVENT_MASK(3)) {
             on_recorder_idle();
         }
@@ -251,7 +254,7 @@ void App::main() {
                 }
                 backlight_wake_ = now;
                 // A quick tap can bring both; the press comes first.
-                if (press) {
+                if (press and not lock_press(btn, now)) {
                     active_screen_->on_press(btn);
                 }
                 if (release) {
@@ -260,6 +263,7 @@ void App::main() {
                 cfg_.display->flush();
             }
         }
+        check_lock_hold(chVTGetSystemTime());
         if (active_screen_->show_status_bar()) {
             status_bar_.draw();
             cfg_.display->flush();
@@ -270,6 +274,26 @@ void App::main() {
         } else {
             do_set_backlight(backlight_brightness_);
         }
+    }
+}
+
+bool App::lock_press(input::Button btn, systime_t now) {
+    const bool locked = locked_;
+    if (locked and btn == input::Button::right and last_press_ == input::Button::left and
+        chTimeDiffX(last_press_at_, now) <= unlock_window) {
+        locked_ = false;
+        beep(1000.0f, 0.1f);
+    }
+    last_press_ = btn;
+    last_press_at_ = now;
+    return locked;
+}
+
+void App::check_lock_hold(systime_t now) {
+    if (not locked_ and last_press_ == input::Button::left and buttons_.pressed(input::Button::left) and
+        chTimeDiffX(last_press_at_, now) >= lock_hold) {
+        locked_ = true;
+        beep(600.0f, 0.2f);
     }
 }
 
@@ -464,7 +488,7 @@ void App::send_messages(Peer &peer) {
             // Already delivered
             continue;
         }
-        if (not(msg.flags & TxMessage::notified) or (now() > msg.last_req_time + RETRANSMIT_DELAY)) {
+        if (not(msg.flags & TxMessage::notified) or (now() > msg.last_req_time + mac().retransmit_delay())) {
             // Not notified yet or didn't got ack
             types::app::message_new msg_new;
             msg_new.id = msg.id;
@@ -475,7 +499,7 @@ void App::send_messages(Peer &peer) {
         }
     }
     for (RxMessage &msg: peer.rx_msgs) {
-        if (msg.size_received < msg.size and now() > msg.last_req_time + RETRANSMIT_DELAY) {
+        if (msg.size_received < msg.size and now() > msg.last_req_time + mac().retransmit_delay()) {
             LOG("retransmit request msg");
             request_message(peer, msg);
         }
@@ -603,11 +627,13 @@ void App::on_message(Peer &peer, const types::app::message_get &msg_get) {
             ssize_t size = std::min(200, (ssize_t) msg.size - (ssize_t) msg_get.offset);
             if (size == 0) {
                 // Receiver ack for full message
-                LOG("msg acked id=%u", msg.id);
-                msg.flags |= TxMessage::acked;
-                home_screen_.on_peer_updated(peer);
-                beep(1000.0f, 0.1f);
-                beep(600.0f, 0.1f);
+                if (not(msg.flags & TxMessage::acked)) {
+                    LOG("msg acked id=%u", msg.id);
+                    msg.flags |= TxMessage::acked;
+                    home_screen_.on_peer_updated(peer);
+                    beep(1000.0f, 0.1f);
+                    beep(600.0f, 0.1f);
+                }
             } else if (size > 0) {
                 bool ok = read_message(peer.addr, msg.id, msg_get.offset, size, tx_buf_);
                 if (ok) {
@@ -652,6 +678,7 @@ void App::on_message(Peer &peer, const types::app::message_data &msg_data) {
     // A chunk other than the one asked for (a repeat, or past the end) is
     // dropped and the wanted one asked for again.
     const std::span<const uint8_t> data{msg_data.data.data(), msg_data.data.size()};
+    bool fully_received = false;
     if (msg_data.offset == msg->size_received and not data.empty() and data.size() <= msg->size - msg->size_received) {
         if (not write_message(peer.addr, msg->id, msg_data.offset, data)) {
             LOG("app: message %u from \"%s\": cannot write chunk at %u", (unsigned) msg->id, peer.name.data(),
@@ -659,11 +686,9 @@ void App::on_message(Peer &peer, const types::app::message_data &msg_data) {
             return;
         }
         msg->size_received += data.size();
+        msg->last_req_time = now();
         if (msg->size_received == msg->size) {
-            home_screen_.on_peer_updated(peer);
-            LOG("app: message %u from \"%s\" received, %u bytes", (unsigned) msg->id, peer.name.data(),
-                (unsigned) msg->size);
-            play_message(peer, *msg);
+            fully_received = true;
         } else {
             beep(600.0f, 0.05f);
         }
@@ -673,6 +698,13 @@ void App::on_message(Peer &peer, const types::app::message_data &msg_data) {
     }
 
     request_message(peer, *msg);
+
+    if (fully_received) {
+        home_screen_.on_peer_updated(peer);
+        LOG("app: message %u from \"%s\" received, %u bytes", (unsigned) msg->id, peer.name.data(),
+            (unsigned) msg->size);
+        play_message(peer, *msg);
+    }
 }
 
 bool App::play_last_message(size_t peer_index) {

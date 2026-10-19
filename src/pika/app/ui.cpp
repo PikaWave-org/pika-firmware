@@ -31,17 +31,19 @@ int next_step(std::span<const int> steps, int current, int dir) {
 int signal_bars(float snr, float min_snr) {
     // SNR compensated by SF
     float a = snr - min_snr;
-    LOG("SNR=%f a=%f", snr, a);
     if (a >= 10.0f) {
         return 4;
     }
-    if (a >= 5.0f) {
+    if (a >= 6.0f) {
         return 3;
     }
-    if (a >= 0.0f) {
+    if (a >= 3.0f) {
         return 2;
     }
-    return 1;
+    if (a >= 0.0f) {
+        return 1;
+    }
+    return 0;
 }
 
 }// namespace
@@ -52,6 +54,16 @@ void StatusBar::draw() {
     chsnprintf(buf, sizeof(buf), "%s %.2f", app_->battery_status().charging != Charge::off ? "CHG" : "   ",
                app_->battery_status().voltage / 1000.0f);
     app_->canvas().text<true>(2, 0, buf);
+
+    if (app_->locked()) {
+        // A padlock in the middle, 7x8: the shackle over a body with a keyhole.
+        constexpr int x = 80 - 3;
+        app_->canvas().rect<true>(x + 1, 0, 5, 1);
+        app_->canvas().rect<true>(x + 1, 1, 1, 2);
+        app_->canvas().rect<true>(x + 5, 1, 1, 2);
+        app_->canvas().rect<true>(x, 3, 7, 5);
+        app_->canvas().rect<false>(x + 3, 4, 1, 2);
+    }
 
     const bool tx = app_->mac().tx_state() == RadioState::tx;
     app_->canvas().rect<false>(160 - 2 - 2 * 8, 0, 16, 8);

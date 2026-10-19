@@ -7,7 +7,8 @@ metadata:
 ---
 
 What the MELPe 2400 codec actually costs on this board, measured 2026-09-19
-with the bench in `targets/test/main.cpp` at 520MHz, `-O2`, caches on. None of
+with the bench in `targets/test/main.cpp` (as of commit 3166278, since removed)
+at 520MHz, `-O2`, caches on. None of
 it is derivable from the source, and the first number decides whether the
 feature is possible at all.
 

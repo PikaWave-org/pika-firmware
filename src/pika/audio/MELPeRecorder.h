@@ -31,15 +31,16 @@ protected:
     ~MELPeSource() = default;
 };
 
-// Encodes the microphone into a MELPe 2400 stream for a MELPeSink, and plays
+// Encodes the microphone into a MELPe 1200 stream for a MELPeSink, and plays
 // one from a MELPeSource. The interrupts only resample and queue; the codec,
 // which is not reentrant, runs on this object's thread. Shared state is
 // single-writer.
 class MELPeRecorder : public chibios_rt::BaseStaticThread<8192>, public AudioConsumer, public AudioSource {
 public:
-    // One 22.5ms frame: 180 samples at 8kHz, 54 bits packed into 7 bytes.
-    static constexpr size_t frame_len = 180U;
-    static constexpr size_t frame_bytes = 7U;
+    // One MELPe 1200 superframe, what melpe_a()/melpe_s() take: 67.5ms, 540
+    // samples at 8kHz, 81 bits packed into 11 bytes.
+    static constexpr size_t frame_len = 540U;
+    static constexpr size_t frame_bytes = 11U;
 
     MELPeRecorder() { chEvtObjectInit(&idle_events_); }
 
@@ -66,7 +67,7 @@ public:
     [[nodiscard]] uint32_t underruns() const { return underruns_; }
 
     // Recording length in tenths of a second.
-    [[nodiscard]] uint32_t tenths() const { return frames_ * 225U / 1000U; }
+    [[nodiscard]] uint32_t tenths() const { return frames_ * frame_len / 800U; }
 
     [[nodiscard]] uint32_t bytes() const { return frames_ * frame_bytes; }
 
@@ -80,9 +81,9 @@ private:
     // Wakes the codec thread, which then checks everything.
     static constexpr eventmask_t evt_wake = EVENT_MASK(0);
 
-    // 360ms of 8kHz PCM either way. A whole number of frames, so a codec
+    // 405ms of 8kHz PCM either way. A whole number of frames, so a codec
     // frame is never split by the wrap.
-    static constexpr size_t ring_len = 16U * frame_len;
+    static constexpr size_t ring_len = 6U * frame_len;
 
     enum : uint8_t { mode_idle, mode_record, mode_drain, mode_replay };
 

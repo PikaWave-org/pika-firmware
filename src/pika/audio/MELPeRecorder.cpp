@@ -117,7 +117,7 @@ void MELPeRecorder::encode_queued() {
         const std::span<int16_t> frame = pcm_buf_.read_span(frame_len);
         chDbgAssert(frame.size() == frame_len, "melpe: capture frame split by the wrap");
         uint8_t bits[frame_bytes];
-        melpe_a24(bits, frame.data());
+        melpe_a(bits, frame.data());
         pcm_buf_.pop(frame_len);
         frames_++;
         melpe_sink_->on_melpe_frame(bits);
@@ -136,7 +136,7 @@ void MELPeRecorder::decode_ahead() {
 
         const std::span<int16_t> frame = pcm_buf_.write_span(frame_len);
         chDbgAssert(frame.size() == frame_len, "melpe: replay frame split by the wrap");
-        melpe_s24(frame.data(), bits);
+        melpe_s(frame.data(), bits);
         pcm_buf_.commit(frame_len);
     }
 }
@@ -159,7 +159,7 @@ void MELPeRecorder::main() {
                     underruns_ = 0U;
                     pcm_buf_.reset();
                     decim_.reset();
-                    melpe_i24();
+                    melpe_i();
                     mode_ = mode_record;
                     break;
 
@@ -172,7 +172,7 @@ void MELPeRecorder::main() {
                     drain_ = false;
                     pcm_buf_.reset();
                     interp_.reset();
-                    melpe_i24();
+                    melpe_i();
                     mode_ = mode_replay;
 
                     // Prime first, so the first pull finds audio.

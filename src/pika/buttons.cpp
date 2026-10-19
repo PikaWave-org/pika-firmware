@@ -3,6 +3,8 @@
 
 #include "buttons.h"
 
+#include <algorithm>
+
 namespace pika::input {
 namespace {
 
@@ -17,10 +19,13 @@ Buttons *Buttons::instance_ = nullptr;
 Buttons::Buttons(const Config &cfg) : cfg_(cfg) {
     chEvtObjectInit(&events_);
     chVTObjectInit(&poll_vt_);
+    chVTObjectInit(&settle_vt_);
 
     for (size_t i = 0; i < count; i++) {
         state_[i].button = (Button) i;
-        state_[i].changed = (systime_t) 0;
+        state_[i].edge = (systime_t) 0;
+        state_[i].pending = false;
+        state_[i].sampled_low = false;
         state_[i].down = false;
     }
 }
@@ -58,35 +63,58 @@ const char *Buttons::name(Button b) {
     return i < count ? button_names[i] : "?";
 }
 
-void Buttons::update_i(State &s) {
-    if (chVTTimeElapsedSinceX(s.changed) < DEBOUNCE) {
-        return;
+void Buttons::edge_i(State &s) {
+    s.edge = chVTGetSystemTimeX();
+    s.pending = true;
+    if (not chVTIsArmedI(&settle_vt_)) {
+        chVTSetI(&settle_vt_, DEBOUNCE, settle_cb, this);
     }
-
-    const bool down = palReadLine(cfg_.lines[(size_t) s.button].line) == PAL_LOW;
-
-    if (down == s.down) {
-        return;
-    }
-
-    s.changed = chVTGetSystemTimeX();
-    s.down = down;
-
-    chEvtBroadcastFlagsI(&events_, down ? press_flag(s.button) : release_flag(s.button));
 }
 
+// Reads every line quiet for DEBOUNCE, and re-arms for the earliest still
+// settling.
+void Buttons::settle_i() {
+    sysinterval_t next = DEBOUNCE + 1U;
+
+    for (State &s: state_) {
+        if (not s.pending) {
+            continue;
+        }
+        const sysinterval_t quiet = chVTTimeElapsedSinceX(s.edge);
+        if (quiet < DEBOUNCE) {
+            next = std::min(next, (sysinterval_t) (DEBOUNCE - quiet));
+            continue;
+        }
+        s.pending = false;
+        const bool down = palReadLine(cfg_.lines[(size_t) s.button].line) == PAL_LOW;
+        if (down != s.down) {
+            s.down = down;
+            chEvtBroadcastFlagsI(&events_, down ? press_flag(s.button) : release_flag(s.button));
+        }
+    }
+    if (next <= DEBOUNCE) {
+        chVTSetI(&settle_vt_, next, settle_cb, this);
+    }
+}
+
+// A polled line's edges are the changes between two samples.
 void Buttons::poll_i() {
-    for (uint8_t i = 0; i < count; i++) {
-        if (cfg_.lines[i].polled) {
-            update_i(state_[i]);
+    for (State &s: state_) {
+        if (not cfg_.lines[(size_t) s.button].polled) {
+            continue;
+        }
+        const bool low = palReadLine(cfg_.lines[(size_t) s.button].line) == PAL_LOW;
+        if (low != s.sampled_low) {
+            s.sampled_low = low;
+            edge_i(s);
         }
     }
 }
 
-// Both entry points arrive with the kernel unlocked.
+// The entry points arrive with the kernel unlocked.
 void Buttons::edge_cb(void *arg) {
     chSysLockFromISR();
-    instance_->update_i(*(State *) arg);
+    instance_->edge_i(*(State *) arg);
     chSysUnlockFromISR();
 }
 
@@ -95,6 +123,14 @@ void Buttons::poll_cb(virtual_timer_t *vtp, void *arg) {
 
     chSysLockFromISR();
     ((Buttons *) arg)->poll_i();
+    chSysUnlockFromISR();
+}
+
+void Buttons::settle_cb(virtual_timer_t *vtp, void *arg) {
+    (void) vtp;
+
+    chSysLockFromISR();
+    ((Buttons *) arg)->settle_i();
     chSysUnlockFromISR();
 }
 
