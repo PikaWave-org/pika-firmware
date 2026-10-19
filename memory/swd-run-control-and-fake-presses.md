@@ -1,6 +1,6 @@
 ---
 name: swd-run-control-and-fake-presses
-description: JLinkExe V7.88 drops argument-less commands from a command file - feed them on stdin; timed run control goes through the GDB server. Flipping PUPDR over SWD fakes a button press.
+description: JLinkExe V7.88 drops argument-less commands from a command file - feed them on stdin; flash only via the flash-firmware target, as a hand-made script that disconnects at boot leaves the panel blank; timed run control goes through the GDB server. Flipping PUPDR over SWD fakes a button press.
 metadata: 
   node_type: memory
   type: reference
@@ -18,6 +18,18 @@ target does. Without a working `qc` Commander drops to its interactive prompt
 and waits on stdin, and under a build tool that never closes stdin that is a
 flash that "hangs right after init". Without `-autoconnect 1` the script is
 processed *before* the connection, so even the commands that do exist fail.
+
+**Flash only through the `flash-firmware` target** - `tools/hw flash`, with
+`--build-dir cmake-build-release` for the Release image - never a hand-made
+J-Link script. Measured 2026-10-19: after `r, h, loadfile, r, g, qc` the
+framebuffer in RAM stayed all zero for 20-40s (once about 2 minutes) with the
+CPU idle in the idle thread and no fault, so boot was stalled before App drew
+anything, and the user saw a blank panel. The target's `loadfile, reset, go,
+sleep 500, exit` has the screen drawn within seconds, and a GDB `monitor
+reset` reaches `App::main()` in 0.6s. The difference that matters is most
+likely `qc` disconnecting in the first milliseconds of boot, where the target
+stays attached for 500ms; which init step stalls was not pinned down. Reading
+memory with `mem8`/`mem32` on a board that has already booted does no harm.
 
 For a scripted sequence with timing (halt, write, resume, wait) the GDB server
 is still the better tool:

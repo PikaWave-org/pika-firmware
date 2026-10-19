@@ -91,6 +91,7 @@ private:
 
     void main() override;
     void encode_queued();
+    void pad_frame();
     void decode_ahead();
     void set_idle();
 

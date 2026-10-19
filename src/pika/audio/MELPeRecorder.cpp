@@ -124,6 +124,17 @@ void MELPeRecorder::encode_queued() {
     }
 }
 
+// The queued partial frame starts on a frame boundary, as the ring is whole
+// frames and is read a frame at a time, so the rest of it never wraps. In
+// drain the capture interrupt no longer writes, so this thread can.
+void MELPeRecorder::pad_frame() {
+    const size_t missing = frame_len - pcm_buf_.size();
+    const std::span<int16_t> rest = pcm_buf_.write_span(missing);
+    chDbgAssert(rest.size() == missing, "melpe: padding split by the wrap");
+    std::fill(rest.begin(), rest.end(), (int16_t) 0);
+    pcm_buf_.commit(rest.size());
+}
+
 void MELPeRecorder::decode_ahead() {
     chDbgAssert(chThdGetSelfX() == thread_.getInner(), "melpe: decode off the codec thread");
 
@@ -164,7 +175,7 @@ void MELPeRecorder::main() {
                     break;
 
                 case req_stop:
-                    // Encode the whole frames still queued, then go idle.
+                    // Encode what is queued, the last frame padded with silence, then go idle.
                     mode_ = mode_drain;
                     break;
 
@@ -195,9 +206,14 @@ void MELPeRecorder::main() {
 
             case mode_drain:
                 encode_queued();
-                if (pcm_buf_.size() < frame_len) {
-                    set_idle();
+                // A short last frame, or none at all from a quick press, is
+                // filled up with silence rather than dropped, so every sample
+                // is kept and a message is never empty.
+                if (pcm_buf_.size() > 0U or frames_ == 0U) {
+                    pad_frame();
+                    encode_queued();
                 }
+                set_idle();
                 break;
 
             case mode_replay:

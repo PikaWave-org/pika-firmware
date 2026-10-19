@@ -228,7 +228,7 @@ void App::main() {
 
     while (true) {
         // Shorter while LEFT is held, so a long press locks on time rather than on release.
-        const bool may_lock = not locked_ and buttons_.pressed(input::Button::left);
+        const bool may_lock = not locked_ and is_active(home_screen_) and buttons_.pressed(input::Button::left);
         const sysinterval_t timeout = may_lock ? TIME_MS2I(50) : TIME_MS2I(500);
         const eventmask_t events =
                 chEvtWaitAnyTimeout(EVENT_MASK(0) | EVENT_MASK(1) | EVENT_MASK(2) | EVENT_MASK(3), timeout);
@@ -252,7 +252,7 @@ void App::main() {
                 if ((not press and not release) or active_screen_ == nullptr) {
                     continue;
                 }
-                backlight_wake_ = now;
+                wake_backlight(now);
                 // A quick tap can bring both; the press comes first.
                 if (press and not lock_press(btn, now)) {
                     active_screen_->on_press(btn);
@@ -282,7 +282,7 @@ bool App::lock_press(input::Button btn, systime_t now) {
     if (locked and btn == input::Button::right and last_press_ == input::Button::left and
         chTimeDiffX(last_press_at_, now) <= unlock_window) {
         locked_ = false;
-        beep(1000.0f, 0.1f);
+        beep_unlocked();
     }
     last_press_ = btn;
     last_press_at_ = now;
@@ -290,10 +290,11 @@ bool App::lock_press(input::Button btn, systime_t now) {
 }
 
 void App::check_lock_hold(systime_t now) {
-    if (not locked_ and last_press_ == input::Button::left and buttons_.pressed(input::Button::left) and
-        chTimeDiffX(last_press_at_, now) >= lock_hold) {
+    // Only from the home screen; elsewhere LEFT is just LEFT.
+    if (not locked_ and is_active(home_screen_) and last_press_ == input::Button::left and
+        buttons_.pressed(input::Button::left) and chTimeDiffX(last_press_at_, now) >= lock_hold) {
         locked_ = true;
-        beep(600.0f, 0.2f);
+        beep_locked();
     }
 }
 
@@ -344,7 +345,7 @@ bool App::start_recording(size_t peer_index) {
     dropped_frames_ = 0;
 
     // Before capturing: the beep needs the sample clock and must not be recorded.
-    beep(1200.0f, 0.1f);
+    beep_started();
     cfg_.recorder->start_record(*this);
     if (not cfg_.mic->start_capture()) {
         cfg_.recorder->stop_record();
@@ -367,7 +368,7 @@ void App::finish_recording() {
     }
     cfg_.mic->stop_capture();
     cfg_.recorder->stop_record();
-    beep(800.0f, 0.1f);
+    beep_stopped();
 
     // The last queued frames are encoded after the stop; only then close.
     cfg_.recorder->wait_idle(TIME_S2I(1));
@@ -386,6 +387,8 @@ void App::finish_recording() {
         TxMessage &msg = recording_peer_->tx_msgs.write_span(1)[0];
         msg.id = recording_id_;
         msg.size = size;
+        msg.size_sent = 0;
+        msg.created = now();
         msg.flags = 0;
         recording_peer_->tx_msgs.commit(1);
         home_screen_.on_peer_updated(*recording_peer_);
@@ -519,6 +522,7 @@ void App::on_message(Peer &peer, const types::app::message_new &msg_new) {
         }
     }
 
+    bool new_msg = false;
     if (msg == nullptr) {
         // Message not found
         if (peer.rx_msgs.full()) {
@@ -531,18 +535,23 @@ void App::on_message(Peer &peer, const types::app::message_new &msg_new) {
         msg->id = msg_new.id;
         msg->size = msg_new.size;
         msg->size_received = 0;
+        msg->created = now();
         msg->msg_type = msg_new.msg_type;
         peer.rx_msgs.commit(1);
+        wake_backlight(chVTGetSystemTime());
         home_screen_.on_peer_updated(peer);
+        new_msg = true;
     } else {
         // Update message info
         msg->size = msg_new.size;
         msg->msg_type = msg_new.msg_type;
     }
 
-    beep(600.0f, 0.05f);
-
     request_message(peer, *msg);
+
+    if (new_msg) {
+        beep_new_message();
+    }
 }
 
 void App::request_message(Peer &peer, RxMessage &msg) {
@@ -619,20 +628,23 @@ void App::on_message(Peer &peer, const types::app::message_get &msg_get) {
             // Peer requests data, notification acked
             msg.flags |= TxMessage::notified;
             msg.last_req_time = now();
+            if (msg_get.offset > msg.size_sent and msg_get.offset <= msg.size) {
+                msg.size_sent = msg_get.offset;
+                home_screen_.on_peer_updated(peer);
+            }
 
             // Send requested data
             types::app::message_data msg_data;
             msg_data.id = msg_get.id;
             msg_data.offset = msg_get.offset;
-            ssize_t size = std::min(200, (ssize_t) msg.size - (ssize_t) msg_get.offset);
+            ssize_t size = std::min((ssize_t) MAX_MSG_DATA_SIZE, (ssize_t) msg.size - (ssize_t) msg_get.offset);
             if (size == 0) {
                 // Receiver ack for full message
                 if (not(msg.flags & TxMessage::acked)) {
                     LOG("msg acked id=%u", msg.id);
                     msg.flags |= TxMessage::acked;
                     home_screen_.on_peer_updated(peer);
-                    beep(1000.0f, 0.1f);
-                    beep(600.0f, 0.1f);
+                    beep_delivered();
                 }
             } else if (size > 0) {
                 bool ok = read_message(peer.addr, msg.id, msg_get.offset, size, tx_buf_);
@@ -687,10 +699,10 @@ void App::on_message(Peer &peer, const types::app::message_data &msg_data) {
         }
         msg->size_received += data.size();
         msg->last_req_time = now();
+        home_screen_.on_peer_updated(peer);
         if (msg->size_received == msg->size) {
             fully_received = true;
-        } else {
-            beep(600.0f, 0.05f);
+            wake_backlight(chVTGetSystemTime());
         }
     } else {
         LOG("app: message %u from \"%s\": unexpected chunk at %u, want %u", (unsigned) msg->id, peer.name.data(),
@@ -700,10 +712,9 @@ void App::on_message(Peer &peer, const types::app::message_data &msg_data) {
     request_message(peer, *msg);
 
     if (fully_received) {
-        home_screen_.on_peer_updated(peer);
         LOG("app: message %u from \"%s\" received, %u bytes", (unsigned) msg->id, peer.name.data(),
             (unsigned) msg->size);
-        play_message(peer, *msg);
+        play_message(peer, false, msg->id);
     }
 }
 
@@ -723,38 +734,44 @@ bool App::play_last_message(size_t peer_index) {
         LOG("app: no received message from \"%s\" to play", peer.name.data());
         return false;
     }
-    return play_message(peer, *last);
+    return play_message(peer, false, last->id);
 }
 
-bool App::play_message(const Peer &peer, const RxMessage &msg) {
+bool App::play_message(const Peer &peer, bool sent, uint32_t msg_id) {
     // Idle also means the previous replay closed its file.
     if (not cfg_.recorder->idle()) {
-        LOG("app: message %u from \"%s\" not played, codec busy", (unsigned) msg.id, peer.name.data());
+        LOG("app: message %u of \"%s\" not played, codec busy", (unsigned) msg_id, peer.name.data());
         return false;
     }
     char path[32];
-    put_msg_path(path, peer.addr, "rx", msg.id);
+    put_msg_path(path, peer.addr, sent ? "tx" : "rx", msg_id);
     if (wf_open(&replay_file_, path, FA_READ) != FR_OK) {
         LOG("app: cannot open %s for replay", path);
         return false;
     }
     LOG("app: playing %s", path);
-    beep(1200.0f, 0.2f);
+    beep_started();
     replay_open_ = true;
-    replaying_ = true;
+    playing_peer_ = &peer;
+    playing_sent_ = sent;
+    playing_id_ = msg_id;
     cfg_.recorder->replay(*cfg_.speaker, *this);
+    // Shows it playing.
+    home_screen_.on_peer_updated(peer);
     return true;
 }
 
 void App::on_recorder_idle() {
-    if (not replaying_ or not cfg_.recorder->idle()) {
+    if (playing_peer_ == nullptr or not cfg_.recorder->idle()) {
         return;
     }
-    replaying_ = false;
+    const Peer &peer = *playing_peer_;
+    playing_peer_ = nullptr;
+    home_screen_.on_peer_updated(peer);
     // The codec is done; the speaker still plays out its last buffer, which
     // the beep would otherwise cut off.
     cfg_.speaker->wait_idle(TIME_MS2I(200));
-    beep(800.0f, 0.1f);
+    beep_stopped();
 }
 
 bool App::fill_melpe_frame(std::span<uint8_t> frame) {
@@ -779,6 +796,24 @@ void App::beep(float freq_hz, float duration_s) {
     tone_gen.tone(spk, freq_hz, 0.3f, duration_s);
     spk.wait_idle(TIME_S2I(1));
 }
+
+void App::beep_started() { beep(1200.0f, 0.1f); }
+
+void App::beep_stopped() { beep(800.0f, 0.1f); }
+
+void App::beep_delivered() {
+    beep(1000.0f, 0.1f);
+    beep(800.0f, 0.1f);
+}
+
+void App::beep_new_message() {
+    beep(800.0f, 0.1f);
+    beep(1000.0f, 0.1f);
+}
+
+void App::beep_locked() { beep(600.0f, 0.2f); }
+
+void App::beep_unlocked() { beep(700.0f, 0.1f); }
 
 void App::do_set_backlight(int brightness) { pwmEnableChannel(cfg_.backlight_pwm, cfg_.backlight_ch, brightness); }
 

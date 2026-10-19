@@ -13,6 +13,7 @@ namespace pika::app {
 static constexpr size_t PEERS_MAX_NUM = 64;
 
 struct RxMessage {
+    Time created{};// When it was announced.
     Time last_req_time{};
     uint32_t id{};
     uint32_t size{};
@@ -26,9 +27,11 @@ struct TxMessage {
         acked = (1 << 1),
     };
 
+    Time created{};// When it was recorded.
     Time last_req_time{};
     uint32_t id{};
     uint32_t size{};
+    uint32_t size_sent{};// The furthest the peer has asked for, so what it has.
     uint8_t flags{};
 };
 

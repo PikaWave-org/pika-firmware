@@ -218,9 +218,7 @@ public:
 
     float get_min_snr() const { return radio_->get_min_snr(); }
 
-    Time retransmit_delay() const {
-        return listen_window_.interval;
-    }
+    Time retransmit_delay() const { return listen_window_.interval; }
 
 private:
     static constexpr size_t PEERS_MAX = 8;
@@ -265,7 +263,10 @@ private:
     void transmit(const Time &send_at) {
         radio_state_ = RadioState::tx;
         chEvtBroadcastFlags(&events_, EVT_TX_START);
+        Time t0 = now();
         radio_->tx(tx_buf_, send_at);
+        Time t1 = now();
+        LOG("tx time %i bytes %ims", tx_buf_.size(), int((t1 - t0) / 1000));
         radio_state_ = RadioState::idle;
         chEvtBroadcastFlags(&events_, EVT_TX_END);
     }

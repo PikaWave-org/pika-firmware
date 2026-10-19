@@ -77,8 +77,6 @@ public:
 
     const BatteryStatus &battery_status() const { return cfg_.charger->status(); }
 
-    // Plays a tone without waiting for it; cuts short whatever is playing.
-    void beep(float freq_hz, float duration_s);
 
     // Records a message to /<peer id>/tx/<message id>; false if it could not start.
     bool start_recording(size_t peer_index);
@@ -91,6 +89,17 @@ public:
     // Plays the newest fully received message from the peer; false if there
     // is none or it could not start.
     bool play_last_message(size_t peer_index);
+
+    // Plays /<peer id>/tx/<message id> if sent, else .../rx/..., unless the
+    // codec is busy; false if it could not start.
+    bool play_message(const Peer &peer, bool sent, uint32_t msg_id);
+
+    // Whether a message to or from the peer, or that very one, is playing.
+    bool is_playing(const Peer &peer) const { return playing_peer_ == &peer; }
+
+    bool is_playing(const Peer &peer, bool sent, uint32_t msg_id) const {
+        return playing_peer_ == &peer and playing_sent_ == sent and playing_id_ == msg_id;
+    }
 
     std::span<Peer> peers() { return std::span(peers_); }
 
@@ -111,6 +120,18 @@ public:
     void on_peer_updated(Address addr, const PeerInfo &peer_info) override;
 
 private:
+    // Plays a tone and waits for it; skipped while the speaker or the codec is
+    // busy. Only through the named sounds below.
+    void beep(float freq_hz, float duration_s);
+
+    // The sounds, by meaning. Recording and playback share started and stopped.
+    void beep_started();
+    void beep_stopped();
+    void beep_delivered();
+    void beep_new_message();
+    void beep_locked();
+    void beep_unlocked();
+
     Config cfg_;
     Canvas canvas_;
     input::Buttons buttons_;
@@ -123,12 +144,17 @@ private:
     int backlight_brightness_{};
     systime_t backlight_wake_ = 0;
 
-    // Keyboard lock: LEFT held for lock_hold locks; LEFT then RIGHT within
-    // unlock_window unlocks. While locked no press reaches a screen; releases
-    // still do, so a button held through locking, like PTT while recording,
-    // still ends what it started.
+    // Restarts the backlight timeout from now; App::main applies it on the same pass.
+    void wake_backlight(systime_t now) { backlight_wake_ = now; }
+
+    // Keyboard lock: LEFT held for lock_hold on the home screen locks; LEFT
+    // then RIGHT within unlock_window unlocks. While locked no press reaches a
+    // screen; releases still do, so a button held through locking, like PTT
+    // while recording, still ends what it started.
     static constexpr sysinterval_t lock_hold = TIME_S2I(1);
     static constexpr sysinterval_t unlock_window = TIME_S2I(1);
+    static constexpr size_t MAX_MSG_DATA_SIZE = 220;
+
     bool locked_ = false;
     input::Button last_press_ = input::Button::count;
     systime_t last_press_at_ = 0;
@@ -136,7 +162,7 @@ private:
     // Sees every press first; true if locked, and the screen must not see it.
     bool lock_press(input::Button btn, systime_t now);
     void check_lock_hold(systime_t now);
-    sysinterval_t backlight_timeout_ = TIME_S2I(10);
+    sysinterval_t backlight_timeout_ = TIME_S2I(30);
     FixedVector<Peer, PEERS_MAX_NUM> peers_;
 
     // Reads /contacts.txt from the SD card, one "id,name,key" per line.
@@ -210,11 +236,12 @@ private:
     // acks the whole message.
     void request_message(Peer &peer, RxMessage &msg);
 
-    // Plays /<peer id>/rx/<message id>, unless the codec is busy.
-    bool play_message(const Peer &peer, const RxMessage &msg);
 
-    // A replay started by play_message() and not yet finished.
-    bool replaying_ = false;
+    // The message play_message() started, until it has played out; no peer
+    // when none.
+    const Peer *playing_peer_ = nullptr;
+    bool playing_sent_ = false;
+    uint32_t playing_id_ = 0;
 
     // Beeps once a replay has played out.
     void on_recorder_idle();
