@@ -3,6 +3,8 @@
 
 #include "ST75160.h"
 
+#include <cstring>
+
 namespace pika::lcd {
 namespace {
 
@@ -80,6 +82,11 @@ const uint8_t init_script[] = {
 #define DMA_BUF __attribute__((section(".nocache"), aligned(4)))
 
 DMA_BUF uint8_t frame_tx[1 + Framebuffer::size];// control byte + frame
+
+// What the panel was last sent, page by page; plain RAM, as only the CPU reads
+// it. Lets a whole screen be redrawn for a change in one row and cost only
+// that row's pages on the bus.
+uint8_t frame_sent[Framebuffer::size];
 
 // Scratch for run_co1(): a whole script emitted as one transaction with Co=1
 // control bytes.
@@ -159,6 +166,7 @@ bool ST75160::init() {
     frame_tx[0] = ctrl_data;
     for (unsigned i = 0U; i < Framebuffer::size; i++) { fb_.bits_[i] = 0U; }
     fb_.dirty_ = Framebuffer::all_pages;
+    sent_ = 0U;
 
     // Reset pulse. The datasheet only asks for 1us low and 1ms of settling,
     // but the vendor's reference code uses 200ms and 100ms, so use those.
@@ -190,6 +198,14 @@ bool ST75160::flush() {
         return false;
     }
 
+    // A page drawn again with the pixels it already shows has nothing to send.
+    for (int page = 0; page < Framebuffer::pages; page++) {
+        const uint16_t bit = (uint16_t) (1U << page);
+        const unsigned at = (unsigned) page * Framebuffer::width;
+        if ((fb_.dirty_ & sent_ & bit) != 0U and memcmp(&fb_.bits_[at], &frame_sent[at], Framebuffer::width) == 0) {
+            fb_.dirty_ &= (uint16_t) ~bit;
+        }
+    }
     if (fb_.dirty_ == 0U) {
         return true;
     }
@@ -223,6 +239,9 @@ bool ST75160::flush() {
 
     // Only on success, so a failed flush is retried rather than dropped.
     if (ok) {
+        const unsigned at = (unsigned) first * Framebuffer::width;
+        memcpy(&frame_sent[at], &fb_.bits_[at], (size_t) (last - first + 1) * Framebuffer::width);
+        sent_ |= (uint16_t) (((2U << last) - 1U) & ~((1U << first) - 1U));
         fb_.dirty_ = 0U;
     }
     return ok;

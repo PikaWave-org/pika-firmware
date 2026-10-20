@@ -163,6 +163,9 @@ private:
     Framebuffer fb_;
     uint32_t error_flags_ = 0U;
     bool ready_ = false;
+    // Bit p set: frame_sent holds what page p on the panel shows, so flush()
+    // can skip it when it is drawn again unchanged.
+    uint16_t sent_ = 0U;
 };
 
 }// namespace pika::lcd

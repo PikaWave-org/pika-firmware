@@ -147,6 +147,8 @@ void App::load_settings() {
             set_backlight(std::clamp(v, 0, 100) * 10);
         } else if (key == "tx_power") {
             cfg_.mac->set_tx_power((float) v);
+        } else if (key == "volume") {
+            set_volume_db(std::clamp(v, volume_muted_db, 0));
         } else {
             LOG("settings: line %u has an unknown key, ignored", line_no);
         }
@@ -159,8 +161,8 @@ void App::save_settings() {
     static FIL file;
 
     char text[48];
-    const int n = chsnprintf(text, sizeof(text), "backlight=%d\ntx_power=%d\n", backlight_brightness_ / 10,
-                             (int) lroundf(cfg_.mac->tx_power()));
+    const int n = chsnprintf(text, sizeof(text), "backlight=%d\ntx_power=%d\nvolume=%d\n", backlight_brightness_ / 10,
+                             (int) lroundf(cfg_.mac->tx_power()), volume_db_);
     FRESULT res = wf_open(&file, "/settings.txt", FA_WRITE | FA_CREATE_ALWAYS);
     if (res == FR_OK) {
         UINT written = 0;
@@ -249,7 +251,7 @@ void App::main() {
                 const bool press = (flags & buttons_.press_flag(btn)) != 0U;
                 const bool release = (flags & buttons_.release_flag(btn)) != 0U;
 
-                if ((not press and not release) or active_screen_ == nullptr) {
+                if (not press and not release) {
                     continue;
                 }
                 wake_backlight(now);
@@ -260,14 +262,10 @@ void App::main() {
                 if (release) {
                     active_screen_->on_release(btn);
                 }
-                cfg_.display->flush();
             }
         }
         check_lock_hold(chVTGetSystemTime());
-        if (active_screen_->show_status_bar()) {
-            status_bar_.draw();
-            cfg_.display->flush();
-        }
+        draw();
 
         if (chVTTimeElapsedSinceX(backlight_wake_) >= backlight_timeout_) {
             do_set_backlight(0);
@@ -308,8 +306,23 @@ void App::init() {
     set_backlight(500);
     load_settings();
     buttons_.init();
-    active_screen_->init();
-    activate_screen(home_screen_);
+    // The home screen at once, rather than at the end of the first pass.
+    draw();
+}
+
+void App::draw() {
+    canvas_.clear();
+    active_screen_->draw();
+    // Last: a title's area starts on the status bar's bottom line.
+    if (active_screen_->show_status_bar()) {
+        draw_status_bar(*this);
+    }
+    cfg_.display->flush();
+}
+
+void App::set_volume_db(int db) {
+    volume_db_ = db;
+    cfg_.speaker->set_volume(db <= volume_muted_db ? 0.0f : powf(10.0f, (float) db / 20.0f));
 }
 
 void App::set_backlight(int brightness) {
@@ -318,11 +331,10 @@ void App::set_backlight(int brightness) {
     do_set_backlight(backlight_brightness_);
 }
 
-bool App::start_recording(size_t peer_index) {
-    if (recording_peer_ != nullptr or peer_index >= peers_.size() or not cfg_.recorder->idle()) {
+bool App::start_recording(Peer &peer) {
+    if (recording_peer_ != nullptr or not cfg_.recorder->idle()) {
         return false;
     }
-    Peer &peer = peers_[peer_index];
 
     // "/<peer id>/tx/<message id>", creating the directories on the way.
     char *p = msg_path_;
@@ -391,7 +403,6 @@ void App::finish_recording() {
         msg.created = now();
         msg.flags = 0;
         recording_peer_->tx_msgs.commit(1);
-        home_screen_.on_peer_updated(*recording_peer_);
         LOG("tx message added: id=%u", msg.id);
         send_messages(*recording_peer_);
     }
@@ -464,14 +475,10 @@ void App::handle_frame_events() {
             }
 
             case MACEvent::peer_updated:
-                if (peer != nullptr) {
-                    home_screen_.on_peer_updated(*peer);
-                }
+                // Shown by the redraw at the end of the pass.
                 break;
         }
         frame_events_.pop(1);
-        // A handler may have redrawn a row; only changed pages are sent.
-        cfg_.display->flush();
     }
 }
 
@@ -487,7 +494,7 @@ void App::send_messages(Peer &peer) {
         return;
     }
     for (TxMessage &msg: peer.tx_msgs) {
-        if (msg.flags & TxMessage::acked) {
+        if (msg.delivered()) {
             // Already delivered
             continue;
         }
@@ -502,7 +509,7 @@ void App::send_messages(Peer &peer) {
         }
     }
     for (RxMessage &msg: peer.rx_msgs) {
-        if (msg.size_received < msg.size and now() > msg.last_req_time + mac().retransmit_delay()) {
+        if (msg.pending() and now() > msg.last_req_time + mac().retransmit_delay()) {
             LOG("retransmit request msg");
             request_message(peer, msg);
         }
@@ -539,7 +546,6 @@ void App::on_message(Peer &peer, const types::app::message_new &msg_new) {
         msg->msg_type = msg_new.msg_type;
         peer.rx_msgs.commit(1);
         wake_backlight(chVTGetSystemTime());
-        home_screen_.on_peer_updated(peer);
         new_msg = true;
     } else {
         // Update message info
@@ -630,7 +636,6 @@ void App::on_message(Peer &peer, const types::app::message_get &msg_get) {
             msg.last_req_time = now();
             if (msg_get.offset > msg.size_sent and msg_get.offset <= msg.size) {
                 msg.size_sent = msg_get.offset;
-                home_screen_.on_peer_updated(peer);
             }
 
             // Send requested data
@@ -640,10 +645,9 @@ void App::on_message(Peer &peer, const types::app::message_get &msg_get) {
             ssize_t size = std::min((ssize_t) MAX_MSG_DATA_SIZE, (ssize_t) msg.size - (ssize_t) msg_get.offset);
             if (size == 0) {
                 // Receiver ack for full message
-                if (not(msg.flags & TxMessage::acked)) {
+                if (not msg.delivered()) {
                     LOG("msg acked id=%u", msg.id);
                     msg.flags |= TxMessage::acked;
-                    home_screen_.on_peer_updated(peer);
                     beep_delivered();
                 }
             } else if (size > 0) {
@@ -699,8 +703,7 @@ void App::on_message(Peer &peer, const types::app::message_data &msg_data) {
         }
         msg->size_received += data.size();
         msg->last_req_time = now();
-        home_screen_.on_peer_updated(peer);
-        if (msg->size_received == msg->size) {
+        if (msg->complete()) {
             fully_received = true;
             wake_backlight(chVTGetSystemTime());
         }
@@ -718,15 +721,11 @@ void App::on_message(Peer &peer, const types::app::message_data &msg_data) {
     }
 }
 
-bool App::play_last_message(size_t peer_index) {
-    if (peer_index >= peers_.size()) {
-        return false;
-    }
-    const Peer &peer = peers_[peer_index];
+bool App::play_last_message(const Peer &peer) {
     // Oldest first, so the last complete one wins.
     const RxMessage *last = nullptr;
     for (const RxMessage &msg: peer.rx_msgs) {
-        if (msg.size > 0 and msg.size_received == msg.size) {
+        if (msg.complete()) {
             last = &msg;
         }
     }
@@ -756,8 +755,6 @@ bool App::play_message(const Peer &peer, bool sent, uint32_t msg_id) {
     playing_sent_ = sent;
     playing_id_ = msg_id;
     cfg_.recorder->replay(*cfg_.speaker, *this);
-    // Shows it playing.
-    home_screen_.on_peer_updated(peer);
     return true;
 }
 
@@ -765,9 +762,7 @@ void App::on_recorder_idle() {
     if (playing_peer_ == nullptr or not cfg_.recorder->idle()) {
         return;
     }
-    const Peer &peer = *playing_peer_;
     playing_peer_ = nullptr;
-    home_screen_.on_peer_updated(peer);
     // The codec is done; the speaker still plays out its last buffer, which
     // the beep would otherwise cut off.
     cfg_.speaker->wait_idle(TIME_MS2I(200));
@@ -814,6 +809,8 @@ void App::beep_new_message() {
 void App::beep_locked() { beep(600.0f, 0.2f); }
 
 void App::beep_unlocked() { beep(700.0f, 0.1f); }
+
+void App::beep_volume() { beep(1000.0f, 0.1f); }
 
 void App::do_set_backlight(int brightness) { pwmEnableChannel(cfg_.backlight_pwm, cfg_.backlight_ch, brightness); }
 

@@ -53,12 +53,8 @@ public:
 
     void init();
 
-    void activate_screen(Screen &screen) {
-        canvas_.clear();
-        active_screen_ = &screen;
-        active_screen_->draw();
-        cfg_.display->flush();
-    }
+    // Switches screens; drawn at the end of the pass, with everything else.
+    void show(Screen &screen) { active_screen_ = &screen; }
 
     Canvas &canvas() { return canvas_; }
 
@@ -67,6 +63,15 @@ public:
     MAC<radio::SX1262> &mac() { return *cfg_.mac; }
 
     int get_backlight() { return backlight_brightness_; }
+
+    // Speaker volume in dB of full scale, of everything it plays; at or below
+    // volume_muted_db, silent.
+    static constexpr int volume_muted_db = -100;
+    int volume_db() const { return volume_db_; }
+    void set_volume_db(int db);
+
+    // A test tone at the volume set, for adjusting it.
+    void beep_volume();
 
     void set_backlight(int brightness);
 
@@ -79,7 +84,7 @@ public:
 
 
     // Records a message to /<peer id>/tx/<message id>; false if it could not start.
-    bool start_recording(size_t peer_index);
+    bool start_recording(Peer &peer);
 
     void finish_recording();
 
@@ -88,7 +93,7 @@ public:
 
     // Plays the newest fully received message from the peer; false if there
     // is none or it could not start.
-    bool play_last_message(size_t peer_index);
+    bool play_last_message(const Peer &peer);
 
     // Plays /<peer id>/tx/<message id> if sent, else .../rx/..., unless the
     // codec is busy; false if it could not start.
@@ -120,6 +125,10 @@ public:
     void on_peer_updated(Address addr, const PeerInfo &peer_info) override;
 
 private:
+    // The whole panel from current state, at the end of every pass of main();
+    // the display only sends the pages that came out different.
+    void draw();
+
     // Plays a tone and waits for it; skipped while the speaker or the codec is
     // busy. Only through the named sounds below.
     void beep(float freq_hz, float duration_s);
@@ -138,11 +147,11 @@ private:
     audio::PCMPlayer pcm_player;
     audio::ToneGenerator tone_gen;
 
-    StatusBar status_bar_{*this};
     HomeScreen home_screen_{*this};
     Screen *active_screen_{&home_screen_};
     int backlight_brightness_{};
     systime_t backlight_wake_ = 0;
+    int volume_db_ = 0;// The speaker starts at full scale.
 
     // Restarts the backlight timeout from now; App::main applies it on the same pass.
     void wake_backlight(systime_t now) { backlight_wake_ = now; }
@@ -169,7 +178,8 @@ private:
     void load_peers();
 
     // Applies /settings.txt, "key=value" lines: backlight in percent,
-    // tx_power in dBm at the antenna. Missing keys keep their defaults.
+    // tx_power in dBm at the antenna, volume in dB. Missing keys keep
+    // their defaults.
     void load_settings();
 
     // Reads our own entry from /id.txt, "id,name,key" like a peer, and sets
