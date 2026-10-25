@@ -1,0 +1,6 @@
+type_class: struct
+comment: "Transfer request for specific peer, sent on discovery channel"
+fields:
+  - { name: "src_addr", type: "uint64", comment: "Source node address" }
+  - { name: "dst_addr", type: "uint64", comment: "Source node address" }
+  - { name: "channel", type: "uint8", comment: "Dedicated transfer channel" }

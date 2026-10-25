@@ -1,0 +1,5 @@
+type_class: struct
+comment: "Transfer ack from slave"
+fields:
+  - { name: "src_addr", type: "uint64", comment: "Source node address" }
+  - { name: "dst_addr", type: "uint64", comment: "Source node address" }

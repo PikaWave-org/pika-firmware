@@ -1,5 +1,8 @@
 proto_id: 1
 comment: "MAC layer protocol"
 messages:
-  0: { name: "sync", type: "pika/types/mac/sync", comment: "Broadcast sync message" }
-  1: { name: "data_frame", type: "pika/types/mac/data_frame", comment: "Data frame, node-to-node" }
+  0: { name: "heartbeat", type: "pika/types/mac/heartbeat" }
+  1: { name: "transfer_request", type: "pika/types/mac/transfer_request" }
+  2: { name: "transfer_data", type: "pika/types/mac/transfer_data" }
+  3: { name: "transfer_ack", type: "pika/types/mac/transfer_ack" }
+  4: { name: "channel_config", type: "pika/types/mac/channel_config" }

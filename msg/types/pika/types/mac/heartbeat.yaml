@@ -1,0 +1,5 @@
+type_class: struct
+comment: "Broadcast heartbeat message, sent on discovery channel"
+fields:
+  - { name: "src_addr", type: "uint64", comment: "Node address" }
+  - { name: "channel", type: "uint8", comment: "Booked dedicated transfer channel" }

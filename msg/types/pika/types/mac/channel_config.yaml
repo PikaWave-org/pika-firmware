@@ -1,0 +1,7 @@
+type_class: struct
+comment: "Dedicated channel configuration request"
+fields:
+  - { name: "src_addr", type: "uint64", comment: "Source node address" }
+  - { name: "dst_addr", type: "uint64", comment: "Source node address" }
+  - { name: "dr_proposal", type: "uint8", comment: "Data rate proposal" }
+  - { name: "next_rx", type: "uint8", comment: "[symbols] Next RX window start after the end of this packet" }
